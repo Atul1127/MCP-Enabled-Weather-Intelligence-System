@@ -22,9 +22,10 @@ from ollama import AsyncClient
 from mcp_client import call_tool, connect, discover_tools
 
 
-# Use the smaller model already available in the project by default.
-# Override with WEATHER_AGENT_MODEL if a different local model is installed.
-OLLAMA_MODEL = os.environ.get("WEATHER_AGENT_MODEL", "llama3.2:1b")
+# Llama 3.2 3B is the project's preferred local model: still lightweight,
+# but noticeably more capable for MCP tool selection than the 1B model.
+# Override with WEATHER_AGENT_MODEL if another local model is preferred.
+OLLAMA_MODEL = os.environ.get("WEATHER_AGENT_MODEL", "llama3.2:3b")
 
 MAX_TOOL_ROUNDS = int(os.environ.get("WEATHER_AGENT_MAX_ROUNDS", "2"))
 
