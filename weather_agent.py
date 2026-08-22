@@ -22,12 +22,10 @@ from ollama import AsyncClient
 from mcp_client import call_tool, connect, discover_tools
 
 
-# Use the smaller model already used by the project by default. Users can
-# override it with WEATHER_AGENT_MODEL without changing code.
-OLLAMA_MODEL = os.environ.get("WEATHER_AGENT_MODEL", "llama3.2:3b")
+# Use the smaller model already available in the project by default.
+# Override with WEATHER_AGENT_MODEL if a different local model is installed.
+OLLAMA_MODEL = os.environ.get("WEATHER_AGENT_MODEL", "llama3.2:1b")
 
-# Normal requests need at most: 1 tool-selection call + 1 final-answer call.
-# Keep this bounded so a local model cannot spend minutes in a tool loop.
 MAX_TOOL_ROUNDS = int(os.environ.get("WEATHER_AGENT_MAX_ROUNDS", "2"))
 
 SYSTEM_PROMPT = """
@@ -77,8 +75,6 @@ async def run_agent(query: str) -> str:
             if not tool_calls:
                 return (response.message.content or "").strip()
 
-            # A normal request may contain multiple independent MCP calls.
-            # Run them concurrently so network/API latency is not cumulative.
             async def execute(tool_call: Any) -> tuple[str, Any]:
                 name = tool_call.function.name
                 arguments = dict(tool_call.function.arguments or {})
