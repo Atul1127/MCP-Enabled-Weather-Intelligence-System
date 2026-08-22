@@ -22,27 +22,23 @@ from ollama import AsyncClient
 from mcp_client import call_tool, connect, discover_tools
 
 
-# Llama 3.2 3B is the project's preferred local model: still lightweight,
-# but noticeably more capable for MCP tool selection than the 1B model.
-# Override with WEATHER_AGENT_MODEL if another local model is preferred.
 OLLAMA_MODEL = os.environ.get("WEATHER_AGENT_MODEL", "llama3.2:3b")
-
 MAX_TOOL_ROUNDS = int(os.environ.get("WEATHER_AGENT_MAX_ROUNDS", "2"))
 
 SYSTEM_PROMPT = """
 You are an Indian Weather Intelligence Agent.
-Use MCP tools when live weather data or weather knowledge is required.
-Use get_weather for current conditions/forecasts and search_weather for stored
-weather knowledge. You may call multiple tools for comparisons. Never invent
-weather data. Give concise, actionable answers in Celsius and km/h.
+Use MCP tools when live weather data, weather risk, or weather knowledge is required.
+Use get_weather for current conditions/forecasts, assess_weather_risk for activity
+safety, and search_weather for stored weather knowledge. You may call multiple tools
+for comparisons. Never invent weather data. Give concise, actionable answers in
+Celsius and km/h.
 """.strip()
 
-AGENT_TOOLS = {"get_weather", "search_weather"}
+AGENT_TOOLS = {"get_weather", "assess_weather_risk", "search_weather"}
 
 
 async def run_agent(query: str) -> str:
     """Run a bounded Ollama -> MCP agent loop."""
-
     if not query.strip():
         raise ValueError("Query cannot be empty")
 
