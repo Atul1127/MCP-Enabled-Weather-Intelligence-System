@@ -1,8 +1,9 @@
 """
-Indian Weather RAG MCP Server.
+Indian Weather Intelligence MCP Server.
 
-Exposes the project's weather and RAG capabilities
-through the Model Context Protocol.
+Exposes the project's weather and RAG capabilities through the
+Model Context Protocol. The server is intentionally domain-focused:
+weather is the tool ecosystem, while MCP is the integration layer.
 
 Tools:
     get_weather
@@ -21,7 +22,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 
 import lakebase
 import rag_service
@@ -32,9 +33,10 @@ import weather_client
 # MCP server
 # ---------------------------------------------------------------------------
 
-mcp = FastMCP(
-    "indian-weather-rag"
-)
+# MCP v2 renamed FastMCP -> MCPServer. The tool implementations remain
+# ordinary typed Python functions, so the domain logic stays independent of
+# the protocol layer.
+mcp = MCPServer("indian-weather-intelligence")
 
 
 # ---------------------------------------------------------------------------
@@ -57,52 +59,27 @@ def get_weather(
     """
 
     if not location or not location.strip():
-        raise ValueError(
-            "location cannot be empty"
-        )
+        raise ValueError("location cannot be empty")
 
     location = location.strip()
 
-    details = (
-        weather_client.geocode_location_details(
-            location
-        )
-    )
+    details = weather_client.geocode_location_details(location)
 
     if not details:
         return {
             "success": False,
-            "error": (
-                f"Could not resolve location: "
-                f"{location}"
-            ),
+            "error": f"Could not resolve location: {location}",
         }
 
     latitude = details["latitude"]
     longitude = details["longitude"]
-
-    weather = (
-        weather_client.fetch_weather(
-            latitude,
-            longitude,
-        )
-    )
-
-    current = weather.get(
-        "current",
-        {},
-    )
-
-    daily = weather.get(
-        "daily",
-        {},
-    )
+    weather = weather_client.fetch_weather(latitude, longitude)
 
     return {
         "success": True,
         "location": details,
-        "current": current,
-        "daily": daily,
+        "current": weather.get("current", {}),
+        "daily": weather.get("daily", {}),
     }
 
 
@@ -116,32 +93,15 @@ def search_weather(
     top_k: int = 5,
 ) -> dict[str, Any]:
     """
-    Search the Indian weather knowledge base using
-    hybrid vector + BM25 retrieval.
-
-    This does NOT generate an LLM answer.
-    It returns the retrieved weather documents.
+    Search the Indian weather knowledge base using hybrid vector + BM25
+    retrieval. This tool retrieves evidence but does not generate an answer.
     """
 
     if not query or not query.strip():
-        raise ValueError(
-            "query cannot be empty"
-        )
+        raise ValueError("query cannot be empty")
 
-    top_k = max(
-        1,
-        min(
-            20,
-            int(top_k),
-        ),
-    )
-
-    documents = (
-        rag_service.retrieve_weather(
-            query.strip(),
-            top_k,
-        )
-    )
+    top_k = max(1, min(20, int(top_k)))
+    documents = rag_service.retrieve_weather(query.strip(), top_k)
 
     return {
         "success": True,
@@ -162,39 +122,18 @@ def ask_weather(
     top_k: int = 5,
 ) -> dict[str, Any]:
     """
-    Ask a natural-language Indian weather question.
-
-    Uses:
-
-        vector retrieval
-        +
-        BM25
-        ↓
-        RRF
-        ↓
-        Ollama
-        ↓
-        grounded answer
+    Answer a natural-language Indian weather question using the existing
+    grounded hybrid-RAG pipeline and local Ollama inference.
     """
 
     if not query or not query.strip():
-        raise ValueError(
-            "query cannot be empty"
-        )
+        raise ValueError("query cannot be empty")
 
-    top_k = max(
-        1,
-        min(
-            20,
-            int(top_k),
-        ),
-    )
+    top_k = max(1, min(20, int(top_k)))
 
-    return (
-        rag_service.answer_weather_question(
-            query=query.strip(),
-            top_k=top_k,
-        )
+    return rag_service.answer_weather_question(
+        query=query.strip(),
+        top_k=top_k,
     )
 
 
@@ -210,32 +149,22 @@ def sync_weather(
     Fetch and store fresh weather data for Indian locations.
 
     Example:
-
         ["Kolkata", "Delhi", "Mumbai"]
     """
 
     if not locations:
-        raise ValueError(
-            "locations cannot be empty"
-        )
+        raise ValueError("locations cannot be empty")
 
     cleaned_locations = [
         location.strip()
         for location in locations
-        if location
-        and location.strip()
+        if location and location.strip()
     ]
 
     if not cleaned_locations:
-        raise ValueError(
-            "No valid locations supplied"
-        )
+        raise ValueError("No valid locations supplied")
 
-    count = (
-        weather_client.sync_locations(
-            cleaned_locations
-        )
-    )
+    count = weather_client.sync_locations(cleaned_locations)
 
     return {
         "success": True,
@@ -250,36 +179,21 @@ def sync_weather(
 
 @mcp.tool()
 def database_health() -> dict[str, Any]:
-    """
-    Check whether the configured PostgreSQL/Lakebase
-    database is reachable.
-    """
+    """Check whether the configured PostgreSQL/Lakebase database is reachable."""
 
     try:
-
-        connected = (
-            lakebase.check_connection()
-        )
+        connected = lakebase.check_connection()
 
         return {
             "success": connected,
-            "backend": (
-                lakebase.DATABASE_BACKEND
-            ),
-            "status": (
-                "ok"
-                if connected
-                else "unavailable"
-            ),
+            "backend": lakebase.DATABASE_BACKEND,
+            "status": "ok" if connected else "unavailable",
         }
 
     except Exception as exc:
-
         return {
             "success": False,
-            "backend": (
-                lakebase.DATABASE_BACKEND
-            ),
+            "backend": lakebase.DATABASE_BACKEND,
             "status": "error",
             "error": str(exc),
         }
@@ -290,7 +204,4 @@ def database_health() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-
-    mcp.run(
-        transport="stdio"
-    )
+    mcp.run()
