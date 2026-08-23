@@ -9,7 +9,13 @@ python-dotenv>=1.0.1
 sentence-transformers>=3.0.0
 torch>=2.1.0
 
-ollama>=0.3.0
+# Local LLM runtime with current tool-calling support.
+ollama>=0.6.2,<0.7.0
 
 rank-bm25>=0.2.2
-mcp[cli]>=1.0.0,<2.0.0
+
+# MCP v2: current stable SDK line for the 2026-07-28 protocol.
+mcp[cli]>=2.0.0,<3.0
+
+# Test runner used by the repository test suite.
+pytest>=8.0.0
