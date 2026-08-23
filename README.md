@@ -18,31 +18,32 @@ MCP Client
   | MCP / stdio
   v
 MCP Server
-  |-----------------------------|
-  v                             v
-Weather tools              Hybrid RAG
-  |                             |
-Open-Meteo                Dense + BM25 + RRF
-  |                             |
-  |-----------------------------|
-                 |
-                 v
-          Ollama final answer
+  |-------------------------------|
+  v               v               v
+Weather tools   Risk tool      Hybrid RAG
+  |               |               |
+Open-Meteo   Deterministic    Dense + BM25 + RRF
+  |           risk scoring          |
+  |---------------|---------------|
+                  |
+                  v
+           Ollama final answer
 ```
 
 ## MCP Tools
 
 - `get_weather` — current weather + 7-day forecast for an Indian location
+- `assess_weather_risk` — deterministic activity-risk assessment using live forecast signals
 - `search_weather` — hybrid vector/BM25 weather knowledge retrieval
 - `sync_weather` — refresh weather data for configured locations
 - `database_health` — check the configured database backend
 - `ask_weather` — existing grounded RAG answer path, kept outside the agent to avoid nested LLM calls
 
-The agent intentionally exposes only `get_weather` and `search_weather` for normal tool calling. This keeps local inference fast and prevents an unnecessary nested Ollama loop.
+The agent exposes `get_weather`, `assess_weather_risk`, and `search_weather` for normal tool calling. The risk tool performs deterministic scoring without another LLM request, keeping the local agent fast.
 
 ## Key Technologies
 
-- **MCP** — tool discovery and protocol-based orchestration
+- **MCP v2** — tool discovery and protocol-based orchestration
 - **Ollama** — local LLM inference; no paid LLM API required
 - **Open-Meteo** — free weather data provider
 - **OpenStreetMap Nominatim** — Indian location/geocoding resolution
@@ -105,10 +106,28 @@ This starts the MCP server through stdio, initializes a real MCP client session,
 python weather_agent.py "What is the current weather in Kolkata?"
 ```
 
-Example comparison:
+Risk-oriented example:
+
+```bash
+python weather_agent.py "Is Kolkata suitable for outdoor activities tomorrow? Explain the main risks."
+```
+
+Comparison example:
 
 ```bash
 python weather_agent.py "Compare the current weather in Kolkata and Delhi."
+```
+
+### 7. Run tests
+
+```bash
+python -m pytest -q
+```
+
+The MCP integration test can be run independently with:
+
+```bash
+python -m pytest tests/test_mcp_client.py -q
 ```
 
 ## Performance Design
@@ -120,6 +139,7 @@ The local agent is intentionally bounded for practical laptop inference:
 - MCP tool schemas are discovered once per session
 - independent MCP tool calls are executed concurrently
 - model is kept alive for repeated requests
+- deterministic risk scoring avoids an extra LLM call
 - `ask_weather` is not exposed to the agent because it would create a nested LLM call
 
 For a simple weather question, the intended flow is:
@@ -128,6 +148,15 @@ For a simple weather question, the intended flow is:
 Ollama tool selection
         -> MCP get_weather
         -> weather API
+        -> Ollama final synthesis
+```
+
+For a decision question:
+
+```text
+Ollama tool selection
+        -> MCP assess_weather_risk
+        -> live forecast + deterministic scoring
         -> Ollama final synthesis
 ```
 
@@ -179,7 +208,7 @@ resources/                    Ingestion configuration
 sql/                          Weather/database schema
 prompts/                      RAG prompts
 rag/                          Retrieval components
-tests/                        API, retrieval, RAG and weather tests
+tests/                        API, retrieval, RAG and MCP tests
 ```
 
 ## Project Focus
