@@ -50,7 +50,7 @@ The agent exposes `get_weather`, `assess_weather_risk`, and `search_weather` for
 - **Sentence Transformers** — dense retrieval/embeddings
 - **BM25** — lexical retrieval
 - **Reciprocal Rank Fusion (RRF)** — hybrid retrieval ranking
-- **PostgreSQL/Lakebase** — existing persistence layer
+- **PostgreSQL/pgvector** — persistence and vector search
 - **Python** — application and MCP implementation
 
 ## Local Setup
@@ -60,7 +60,6 @@ The agent exposes `get_weather`, `assess_weather_risk`, and `search_weather` for
 ```bash
 git clone https://github.com/Atul1127/MCP-Enabled-Weather-Intelligence-System.git
 cd MCP-Enabled-Weather-Intelligence-System
-git checkout mcp-modernization
 ```
 
 ### 2. Create the virtual environment
@@ -79,18 +78,20 @@ python -m pip install -r requirements.txt
 
 ### 4. Make sure Ollama is running
 
-The default agent model is:
+The default local model is:
 
 ```text
 llama3.2:3b
 ```
 
-You can change it without editing code:
+You can change the agent model without editing code:
 
 ```bash
 # Git Bash
 export WEATHER_AGENT_MODEL=qwen3:4b
 ```
+
+The RAG answer path can be configured independently with `WEATHER_LLM_MODEL`.
 
 ### 5. Run the MCP smoke test
 
@@ -130,6 +131,16 @@ The MCP integration test can be run independently with:
 python -m pytest tests/test_mcp_client.py -q
 ```
 
+## Docker
+
+Docker Compose provides the existing Flask/RAG API and PostgreSQL + pgvector database. Ollama remains on the host so the local model can be reused without putting model weights into the image.
+
+```bash
+docker compose up --build
+```
+
+The API is available on port `8000` and uses `llama3.2:3b` by default. The MCP agent is normally run locally with `python weather_agent.py` so it can launch the MCP server over stdio.
+
 ## Performance Design
 
 The local agent is intentionally bounded for practical laptop inference:
@@ -140,6 +151,7 @@ The local agent is intentionally bounded for practical laptop inference:
 - independent MCP tool calls are executed concurrently
 - model is kept alive for repeated requests
 - deterministic risk scoring avoids an extra LLM call
+- RAG is lazily imported by the MCP server, so simple weather/risk requests do not initialize the embedding model
 - `ask_weather` is not exposed to the agent because it would create a nested LLM call
 
 For a simple weather question, the intended flow is:
@@ -206,9 +218,10 @@ notebooks/                    Weather embedding/ingestion work
 scripts/                      Data ingestion utilities
 resources/                    Ingestion configuration
 sql/                          Weather/database schema
-prompts/                      RAG prompts
-rag/                          Retrieval components
+templates/                    Flask UI templates
 tests/                        API, retrieval, RAG and MCP tests
+Dockerfile                    Flask/RAG container image
+docker-compose.yml            PostgreSQL + Flask/RAG local stack
 ```
 
 ## Project Focus
