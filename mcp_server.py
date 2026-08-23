@@ -1,23 +1,4 @@
-"""
-Indian Weather Intelligence MCP Server.
-
-Exposes the project's weather and RAG capabilities through the
-Model Context Protocol. The server is intentionally domain-focused:
-weather is the tool ecosystem, while MCP is the integration layer.
-
-Tools:
-    get_weather
-    assess_weather_risk
-    search_weather
-    ask_weather
-    sync_weather
-    database_health
-
-Transport:
-    stdio
-
-No paid API key is required.
-"""
+"""Indian Weather Intelligence MCP Server."""
 
 from __future__ import annotations
 
@@ -26,7 +7,6 @@ from typing import Any
 from mcp.server import MCPServer
 
 import lakebase
-import rag_service
 import weather_client
 
 
@@ -58,12 +38,7 @@ def assess_weather_risk(
     location: str,
     activity: str = "outdoor activity",
 ) -> dict[str, Any]:
-    """Assess practical weather risk for an outdoor activity in an Indian location.
-
-    Uses the existing live forecast and deterministic thresholds, so this tool
-    does not require another LLM call. It returns a simple LOW/MODERATE/HIGH
-    risk level plus the factors that drove the decision.
-    """
+    """Assess practical weather risk using live forecast signals and deterministic rules."""
     weather = get_weather(location)
     if not weather.get("success"):
         return weather
@@ -107,7 +82,6 @@ def assess_weather_risk(
         score += 1
         factors.append(f"high apparent temperature ({apparent_max:.1f}°C)")
 
-    # Open-Meteo severe-weather codes: 95-99 represent thunderstorms.
     if weather_code >= 95:
         score += 2
         factors.append("thunderstorm risk in the forecast")
@@ -146,6 +120,8 @@ def search_weather(query: str, top_k: int = 5) -> dict[str, Any]:
     """Search the Indian weather knowledge base using hybrid vector + BM25 retrieval."""
     if not query or not query.strip():
         raise ValueError("query cannot be empty")
+    import rag_service
+
     top_k = max(1, min(20, int(top_k)))
     documents = rag_service.retrieve_weather(query.strip(), top_k)
     return {
@@ -159,9 +135,11 @@ def search_weather(query: str, top_k: int = 5) -> dict[str, Any]:
 
 @mcp.tool()
 def ask_weather(query: str, top_k: int = 5) -> dict[str, Any]:
-    """Answer a natural-language Indian weather question using grounded hybrid RAG."""
+    """Answer an Indian weather question using grounded hybrid RAG."""
     if not query or not query.strip():
         raise ValueError("query cannot be empty")
+    import rag_service
+
     top_k = max(1, min(20, int(top_k)))
     return rag_service.answer_weather_question(query=query.strip(), top_k=top_k)
 
