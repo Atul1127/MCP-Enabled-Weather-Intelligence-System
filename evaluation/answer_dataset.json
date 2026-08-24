@@ -1,0 +1,12 @@
+[
+  {"id":"answer_001","query":"What is the current weather in Kolkata?","criteria":["reports current temperature","uses Celsius","identifies Kolkata"]},
+  {"id":"answer_002","query":"What will the weather be like in Delhi tomorrow?","criteria":["describes tomorrow's forecast","identifies Delhi","does not invent unsupported conditions"]},
+  {"id":"answer_003","query":"Is Kolkata suitable for outdoor activities tomorrow? Explain the main risks.","criteria":["gives a clear suitability decision","mentions relevant weather risks","uses forecast evidence"]},
+  {"id":"answer_004","query":"Would Mumbai be safe for cycling tomorrow?","criteria":["gives a cycling safety decision","mentions relevant hazards","is actionable"]},
+  {"id":"answer_005","query":"Are there any dangerous weather alerts for Kolkata this week?","criteria":["summarizes significant hazards","distinguishes severity where possible","does not invent alerts"]},
+  {"id":"answer_006","query":"Will Mumbai have any heavy rain or thunderstorm hazards in the forecast?","criteria":["addresses heavy rain","addresses thunderstorms","uses forecast information"]},
+  {"id":"answer_007","query":"What does a high weather risk score mean?","criteria":["explains the concept","does not claim a location-specific forecast","is understandable to a general user"]},
+  {"id":"answer_008","query":"What weather conditions are generally dangerous for outdoor activities?","criteria":["lists relevant hazards","explains why they matter","does not present generic claims as current weather"]},
+  {"id":"answer_009","query":"Compare the current weather in Kolkata and Delhi.","criteria":["covers both Kolkata and Delhi","makes a meaningful comparison","does not omit either location"]},
+  {"id":"answer_010","query":"Compare Kolkata and Mumbai for outdoor activities tomorrow.","criteria":["covers both locations","compares outdoor-activity suitability","supports the comparison with forecast risks"]}
+]
