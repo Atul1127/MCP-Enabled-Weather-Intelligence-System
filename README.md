@@ -20,60 +20,15 @@ The system combines **real-time weather APIs, deterministic hazard intelligence,
 
 ## Architecture
 
-```text
-                         User
-                           |
-            +--------------+--------------+
-            |                             |
-            v                             v
-   Weather Intelligence            AI Weather Q&A
-       Dashboard                         |
-            |                            v
-            +--------------------> Ollama Local LLM
-                                      |
-                                      v
-                                  MCP Client
-                                      |
-                              MCP / stdio boundary
-                                      |
-                                      v
-                                  MCP Server
-                                      |
-        +-----------------------------+-----------------------------+
-        |                             |                             |
-        v                             v                             v
-  get_weather                 assess_weather_risk          get_weather_alerts
-        |                             |                             |
-        |                       deterministic rules            hazard rules
-        |                             |                             |
-        +-----------------------------+-----------------------------+
-                                      |
-                                      v
-                                  Open-Meteo
-                                      |
-                                      v
-                              Live forecast signals
+![System Architecture](docs/architecture.svg)
 
-                          MCP Server also exposes
-                                      |
-                                      v
-                              search_weather
-                                      |
-                              +-------+-------+
-                              |               |
-                              v               v
-                         Dense Retrieval    BM25
-                              |               |
-                              +-------+-------+
-                                      |
-                                     RRF
-                                      |
-                                      v
-                               Weather evidence
-                                      |
-                                      v
-                                Ollama synthesis
+The core runtime path is:
+
+```text
+User → Ollama → MCP Client → MCP Server → specialized weather/RAG tools → Ollama synthesis
 ```
+
+This keeps the LLM separated from application capabilities and makes tool discovery, routing, and evaluation explicit.
 
 ## MCP Tools
 
@@ -119,6 +74,22 @@ The UI supports:
 - Activity-oriented weather intelligence
 
 The dashboard is backed by the same Flask API and MCP/RAG components rather than a separate demo implementation.
+
+### Quick Demo
+
+```bash
+python app.py
+```
+
+Then open `http://127.0.0.1:8000/`, search for an Indian city such as **Kolkata**, and test:
+
+> Is Kolkata suitable for outdoor activities tomorrow?
+
+For a CLI demo without the dashboard:
+
+```bash
+python weather_agent.py "Are there any dangerous weather alerts for Kolkata this week?"
+```
 
 ## Evaluation
 
@@ -427,6 +398,7 @@ evaluation/dataset.json          50-case MCP agent benchmark
 evaluation/evaluate_agent.py     Tool-selection evaluation
 evaluation/answer_dataset.json   Answer-quality benchmark
 evaluation/evaluate_answers.py   Answer-quality evaluation
+docs/architecture.svg            Architecture diagram
 notebooks/                       Weather embedding/ingestion work
 scripts/                         Data ingestion utilities
 resources/                       Ingestion configuration
