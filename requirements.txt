@@ -19,7 +19,3 @@ mcp[cli]>=2.0.0,<3.0
 
 # Test runner used by the repository test suite.
 pytest>=8.0.0
-
-# Optional Redis cache. The application falls back to in-memory caching when
-# Redis is not configured, so local development remains zero-dependency.
-redis>=5.0.0
