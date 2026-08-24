@@ -2,7 +2,7 @@
 
 An **MCP-first, local AI weather intelligence system** for Indian locations. The project demonstrates how a local Ollama model can discover and call weather capabilities through a real **Model Context Protocol (MCP) client/server boundary**, rather than directly importing application functions.
 
-The goal is not to replace a normal weather app. The system demonstrates **LLM tool orchestration, real-time API integration, hybrid RAG retrieval, and decision-oriented weather analysis** while remaining free to run locally.
+The goal is not to replace a normal weather app. The system demonstrates **LLM tool orchestration, real-time API integration, hybrid RAG retrieval, evaluation, and decision-oriented weather analysis** while remaining free to run locally.
 
 ## Architecture
 
@@ -40,6 +40,33 @@ Open-Meteo   Deterministic    Dense + BM25 + RRF
 - `ask_weather` — existing grounded RAG answer path, kept outside the agent to avoid nested LLM calls
 
 The agent exposes `get_weather`, `assess_weather_risk`, and `search_weather` for normal tool calling. The risk tool performs deterministic scoring without another LLM request, keeping the local agent fast.
+
+## Evaluation
+
+The project now includes an evaluation layer in addition to the unit/integration test suite. The benchmark evaluates the behavior of the **LLM -> MCP tool-selection boundary**, rather than only checking whether individual Python functions work.
+
+The initial benchmark in `evaluation/dataset.json` contains realistic weather questions covering current weather, forecasts, activity risk, knowledge retrieval, and multi-location comparisons.
+
+Metrics currently reported:
+
+- **Tool-selection exact accuracy** — predicted MCP tool set exactly matches the expected tool set
+- **Expected-tool recall** — every required tool was selected
+- **Location-argument accuracy** — requested locations were passed to MCP tools correctly
+- **Average tool-selection latency** — time spent by the local model deciding which MCP tools to call
+
+Run it with:
+
+```bash
+python evaluation/evaluate_agent.py
+```
+
+To use a different dataset or output path:
+
+```bash
+python evaluation/evaluate_agent.py --dataset evaluation/dataset.json --output evaluation/results.json
+```
+
+The generated `evaluation/results.json` keeps per-case predictions and metrics so model or prompt changes can be compared over time. The benchmark is intentionally separate from `pytest`: tests protect implementation correctness, while evaluations measure agent behavior and quality.
 
 ## Key Technologies
 
@@ -131,6 +158,12 @@ The MCP integration test can be run independently with:
 python -m pytest tests/test_mcp_client.py -q
 ```
 
+### 8. Run evaluation
+
+```bash
+python evaluation/evaluate_agent.py
+```
+
 ## Docker
 
 Docker Compose provides the existing Flask/RAG API and PostgreSQL + pgvector database. Ollama remains on the host so the local model can be reused without putting model weights into the image.
@@ -214,6 +247,8 @@ mcp_client.py                 MCP stdio client and tool discovery
 weather_agent.py              Ollama -> MCP agent loop
 weather_client.py             Indian location + weather data client
 rag_service.py                Hybrid weather retrieval/RAG
+evaluation/dataset.json       Agent evaluation benchmark
+evaluation/evaluate_agent.py  Evaluation runner and metrics
 notebooks/                    Weather embedding/ingestion work
 scripts/                      Data ingestion utilities
 resources/                    Ingestion configuration
@@ -221,7 +256,7 @@ sql/                          Weather/database schema
 templates/                    Flask UI templates
 tests/                        API, retrieval, RAG and MCP tests
 Dockerfile                    Flask/RAG container image
-docker-compose.yml            PostgreSQL + Flask/RAG local stack
+docker-compose.yml            PostgreSQL + pgvector local stack
 ```
 
 ## Project Focus
