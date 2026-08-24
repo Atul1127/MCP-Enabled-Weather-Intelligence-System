@@ -21,10 +21,11 @@ SYSTEM_PROMPT = """
 You are evaluating an Indian Weather Intelligence Agent. Select only the MCP tool
 needed for the user's request. Never answer the question. Return tool calls only.
 Use get_weather for current conditions/forecasts, assess_weather_risk for activity
-safety, and search_weather for stored weather knowledge.
+safety, get_weather_alerts for forecast hazards/alerts, and search_weather for
+stored weather knowledge.
 """.strip()
 
-ALLOWED_TOOLS = {"get_weather", "assess_weather_risk", "search_weather"}
+ALLOWED_TOOLS = {"get_weather", "assess_weather_risk", "get_weather_alerts", "search_weather"}
 
 
 def location_match(expected: dict[str, Any], calls: list[dict[str, Any]]) -> bool:
