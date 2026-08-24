@@ -19,19 +19,17 @@ if str(ROOT) not in sys.path:
 from ollama import AsyncClient
 
 from mcp_client import connect, discover_tools
+from weather_agent import SYSTEM_PROMPT
 
 MODEL = os.environ.get("WEATHER_AGENT_MODEL", "llama3.2:3b")
 DATASET = Path(__file__).with_name("dataset.json")
 
-SYSTEM_PROMPT = """
-You are evaluating an Indian Weather Intelligence Agent. Select only the MCP tool
-needed for the user's request. Never answer the question. Return tool calls only.
-Use get_weather for current conditions/forecasts, assess_weather_risk for activity
-safety, get_weather_alerts for forecast hazards/alerts, and search_weather for
-stored weather knowledge.
-""".strip()
-
-ALLOWED_TOOLS = {"get_weather", "assess_weather_risk", "get_weather_alerts", "search_weather"}
+ALLOWED_TOOLS = {
+    "get_weather",
+    "assess_weather_risk",
+    "get_weather_alerts",
+    "search_weather",
+}
 
 
 def location_match(expected: dict[str, Any], calls: list[dict[str, Any]]) -> bool:
@@ -55,7 +53,13 @@ async def evaluate_case(case: dict[str, Any], ollama: AsyncClient, tools: list[d
         model=MODEL,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": case["query"]},
+            {
+                "role": "user",
+                "content": (
+                    "Select the MCP tool(s) for this request. Do not answer the request. "
+                    "Return tool calls only.\n\nUser request: " + case["query"]
+                ),
+            },
         ],
         tools=tools,
         stream=False,
