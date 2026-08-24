@@ -5,16 +5,16 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import re
+import os
 import time
 from pathlib import Path
 from typing import Any
 
 from ollama import AsyncClient
 
-from mcp_client import AGENT_TOOLS if False else connect, discover_tools
+from mcp_client import connect, discover_tools
 
-MODEL = __import__("os").environ.get("WEATHER_AGENT_MODEL", "llama3.2:3b")
+MODEL = os.environ.get("WEATHER_AGENT_MODEL", "llama3.2:3b")
 DATASET = Path(__file__).with_name("dataset.json")
 
 SYSTEM_PROMPT = """
@@ -25,16 +25,6 @@ safety, and search_weather for stored weather knowledge.
 """.strip()
 
 ALLOWED_TOOLS = {"get_weather", "assess_weather_risk", "search_weather"}
-
-
-def normalize(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {str(k).lower(): normalize(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [normalize(v) for v in value]
-    if isinstance(value, str):
-        return value.strip().lower()
-    return value
 
 
 def location_match(expected: dict[str, Any], calls: list[dict[str, Any]]) -> bool:
@@ -68,24 +58,22 @@ async def evaluate_case(case: dict[str, Any], ollama: AsyncClient, tools: list[d
 
     calls = []
     for tool_call in response.message.tool_calls or []:
-        name = tool_call.function.name
-        arguments = dict(tool_call.function.arguments or {})
-        calls.append({"name": name, "arguments": arguments})
+        calls.append({
+            "name": tool_call.function.name,
+            "arguments": dict(tool_call.function.arguments or {}),
+        })
 
     expected = set(case["expected_tools"])
     actual = {call["name"] for call in calls}
-    exact_tools = actual == expected
-    expected_hit = expected.issubset(actual)
-    loc_ok = location_match(case, calls)
 
     return {
         "id": case["id"],
         "query": case["query"],
         "expected_tools": sorted(expected),
         "actual_tools": sorted(actual),
-        "tool_selection_exact": exact_tools,
-        "expected_tools_found": expected_hit,
-        "location_arguments_correct": loc_ok,
+        "tool_selection_exact": actual == expected,
+        "expected_tools_found": expected.issubset(actual),
+        "location_arguments_correct": location_match(case, calls),
         "latency_ms": latency_ms,
         "tool_calls": calls,
     }
@@ -103,10 +91,7 @@ async def main() -> None:
     async with connect() as session:
         discovered = await discover_tools(session)
         tools = [tool for tool in discovered if tool["function"]["name"] in ALLOWED_TOOLS]
-
-        results = []
-        for case in cases:
-            results.append(await evaluate_case(case, ollama, tools))
+        results = [await evaluate_case(case, ollama, tools) for case in cases]
 
     exact = sum(r["tool_selection_exact"] for r in results)
     expected_hit = sum(r["expected_tools_found"] for r in results)
