@@ -79,6 +79,7 @@ async def evaluate_case(case: dict[str, Any], ollama: AsyncClient, tools: list[d
 
     return {
         "id": case["id"],
+        "category": case.get("category", "uncategorized"),
         "query": case["query"],
         "expected_tools": sorted(expected),
         "actual_tools": sorted(actual),
@@ -88,6 +89,39 @@ async def evaluate_case(case: dict[str, Any], ollama: AsyncClient, tools: list[d
         "latency_ms": latency_ms,
         "tool_calls": calls,
     }
+
+
+def percentile(values: list[float], percentile_rank: float) -> float:
+    if not values:
+        return 0.0
+    values = sorted(values)
+    index = (len(values) - 1) * percentile_rank
+    lower = int(index)
+    upper = min(lower + 1, len(values) - 1)
+    fraction = index - lower
+    return round(values[lower] + (values[upper] - values[lower]) * fraction, 2)
+
+
+def category_metrics(results: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for result in results:
+        grouped.setdefault(result["category"], []).append(result)
+
+    metrics: dict[str, dict[str, Any]] = {}
+    for category, cases in grouped.items():
+        metrics[category] = {
+            "count": len(cases),
+            "exact_accuracy": round(
+                sum(case["tool_selection_exact"] for case in cases) / len(cases), 4
+            ),
+            "tool_recall": round(
+                sum(case["expected_tools_found"] for case in cases) / len(cases), 4
+            ),
+            "location_accuracy": round(
+                sum(case["location_arguments_correct"] for case in cases) / len(cases), 4
+            ),
+        }
+    return metrics
 
 
 async def main() -> None:
@@ -107,7 +141,7 @@ async def main() -> None:
     exact = sum(r["tool_selection_exact"] for r in results)
     expected_hit = sum(r["expected_tools_found"] for r in results)
     location_ok = sum(r["location_arguments_correct"] for r in results)
-    avg_latency = sum(r["latency_ms"] for r in results) / len(results)
+    latencies = [r["latency_ms"] for r in results]
 
     report = {
         "model": MODEL,
@@ -116,8 +150,11 @@ async def main() -> None:
             "tool_selection_exact_accuracy": round(exact / len(results), 4),
             "expected_tool_recall": round(expected_hit / len(results), 4),
             "location_argument_accuracy": round(location_ok / len(results), 4),
-            "average_tool_selection_latency_ms": round(avg_latency, 2),
+            "average_tool_selection_latency_ms": round(sum(latencies) / len(latencies), 2),
+            "p50_tool_selection_latency_ms": percentile(latencies, 0.50),
+            "p95_tool_selection_latency_ms": percentile(latencies, 0.95),
         },
+        "category_metrics": category_metrics(results),
         "cases": results,
     }
 
@@ -129,7 +166,11 @@ async def main() -> None:
     print("=" * 28)
     for key, value in report["metrics"].items():
         print(f"{key}: {value}")
-    print(f"Results: {output}")
+    print("\nCategory Metrics")
+    print("-" * 28)
+    for category, values in report["category_metrics"].items():
+        print(f"{category}: {values['exact_accuracy']:.2%} ({values['count']} cases)")
+    print(f"\nResults: {output}")
 
 
 if __name__ == "__main__":
