@@ -34,6 +34,108 @@ def get_weather(location: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+def get_weather_alerts(location: str) -> dict[str, Any]:
+    """Detect actionable weather hazards from the live 7-day forecast.
+
+    This is an application-level hazard detector, not an official government
+    warning service. It reports forecast signals and practical recommendations.
+    """
+    weather = get_weather(location)
+    if not weather.get("success"):
+        return weather
+
+    daily = weather.get("daily", {})
+    alerts: list[dict[str, Any]] = []
+    dates = daily.get("time", [])
+
+    def values(name: str) -> list[Any]:
+        return daily.get(name) or []
+
+    rain_probability = values("precipitation_probability_max")
+    precipitation = values("precipitation_sum")
+    wind = values("wind_speed_10m_max")
+    apparent_max = values("apparent_temperature_max")
+    codes = values("weather_code")
+
+    for index, date in enumerate(dates):
+        probability = rain_probability[index] if index < len(rain_probability) else 0
+        rain = precipitation[index] if index < len(precipitation) else 0
+        max_wind = wind[index] if index < len(wind) else 0
+        apparent = apparent_max[index] if index < len(apparent_max) else 0
+        code = codes[index] if index < len(codes) else None
+
+        if probability >= 70 and rain >= 15:
+            alerts.append({
+                "date": date,
+                "severity": "HIGH",
+                "hazard": "Heavy rain",
+                "probability": probability,
+                "details": f"{rain:.1f} mm expected with {probability}% precipitation probability.",
+                "recommendation": "Avoid unnecessary outdoor activity and plan for travel disruption.",
+            })
+        elif probability >= 70:
+            alerts.append({
+                "date": date,
+                "severity": "MODERATE",
+                "hazard": "High rain probability",
+                "probability": probability,
+                "details": f"Precipitation probability is {probability}%.",
+                "recommendation": "Keep rain protection available and monitor the forecast.",
+            })
+
+        if max_wind >= 40:
+            alerts.append({
+                "date": date,
+                "severity": "HIGH",
+                "hazard": "Strong wind",
+                "probability": None,
+                "details": f"Maximum forecast wind is {max_wind:.1f} km/h.",
+                "recommendation": "Avoid exposed outdoor activities and secure loose objects.",
+            })
+
+        if apparent >= 40:
+            alerts.append({
+                "date": date,
+                "severity": "HIGH",
+                "hazard": "Extreme heat",
+                "probability": None,
+                "details": f"Maximum apparent temperature is {apparent:.1f}°C.",
+                "recommendation": "Limit strenuous outdoor activity, hydrate, and seek shade.",
+            })
+        elif apparent >= 35:
+            alerts.append({
+                "date": date,
+                "severity": "MODERATE",
+                "hazard": "High heat",
+                "probability": None,
+                "details": f"Maximum apparent temperature is {apparent:.1f}°C.",
+                "recommendation": "Take heat precautions during strenuous outdoor activity.",
+            })
+
+        if code is not None and code >= 95:
+            alerts.append({
+                "date": date,
+                "severity": "HIGH",
+                "hazard": "Thunderstorm",
+                "probability": None,
+                "details": f"Forecast weather code is {code}.",
+                "recommendation": "Avoid exposed outdoor locations and seek sturdy shelter.",
+            })
+
+    severity_order = {"HIGH": 0, "MODERATE": 1}
+    alerts.sort(key=lambda item: (severity_order[item["severity"]], item["date"]))
+
+    return {
+        "success": True,
+        "location": weather["location"],
+        "alerts": alerts,
+        "alert_count": len(alerts),
+        "highest_severity": alerts[0]["severity"] if alerts else "NONE",
+        "disclaimer": "Application-level forecast hazard detection; not an official government warning.",
+    }
+
+
+@mcp.tool()
 def assess_weather_risk(
     location: str,
     activity: str = "outdoor activity",
@@ -60,28 +162,24 @@ def assess_weather_risk(
     elif rain_probability >= 40:
         score += 1
         factors.append(f"moderate precipitation probability ({rain_probability}%)")
-
     if precipitation >= 10:
         score += 2
         factors.append(f"heavy expected precipitation ({precipitation:.1f} mm)")
     elif precipitation >= 3:
         score += 1
         factors.append(f"expected precipitation ({precipitation:.1f} mm)")
-
     if wind >= 30:
         score += 2
         factors.append(f"strong wind ({wind:.1f} km/h)")
     elif wind >= 20:
         score += 1
         factors.append(f"elevated wind ({wind:.1f} km/h)")
-
     if apparent_max >= 40:
         score += 2
         factors.append(f"very high apparent temperature ({apparent_max:.1f}°C)")
     elif apparent_max >= 35:
         score += 1
         factors.append(f"high apparent temperature ({apparent_max:.1f}°C)")
-
     if weather_code >= 95:
         score += 2
         factors.append("thunderstorm risk in the forecast")
@@ -121,16 +219,9 @@ def search_weather(query: str, top_k: int = 5) -> dict[str, Any]:
     if not query or not query.strip():
         raise ValueError("query cannot be empty")
     import rag_service
-
     top_k = max(1, min(20, int(top_k)))
     documents = rag_service.retrieve_weather(query.strip(), top_k)
-    return {
-        "success": True,
-        "query": query.strip(),
-        "retrieval": "hybrid",
-        "documents": documents,
-        "count": len(documents),
-    }
+    return {"success": True, "query": query.strip(), "retrieval": "hybrid", "documents": documents, "count": len(documents)}
 
 
 @mcp.tool()
@@ -139,7 +230,6 @@ def ask_weather(query: str, top_k: int = 5) -> dict[str, Any]:
     if not query or not query.strip():
         raise ValueError("query cannot be empty")
     import rag_service
-
     top_k = max(1, min(20, int(top_k)))
     return rag_service.answer_weather_question(query=query.strip(), top_k=top_k)
 
@@ -161,18 +251,9 @@ def database_health() -> dict[str, Any]:
     """Check whether the configured PostgreSQL/Lakebase database is reachable."""
     try:
         connected = lakebase.check_connection()
-        return {
-            "success": connected,
-            "backend": lakebase.DATABASE_BACKEND,
-            "status": "ok" if connected else "unavailable",
-        }
+        return {"success": connected, "backend": lakebase.DATABASE_BACKEND, "status": "ok" if connected else "unavailable"}
     except Exception as exc:
-        return {
-            "success": False,
-            "backend": lakebase.DATABASE_BACKEND,
-            "status": "error",
-            "error": str(exc),
-        }
+        return {"success": False, "backend": lakebase.DATABASE_BACKEND, "status": "error", "error": str(exc)}
 
 
 if __name__ == "__main__":
