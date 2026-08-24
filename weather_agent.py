@@ -43,10 +43,18 @@ Routing rules:
   why, or how a weather concept works without asking for a location-specific
   safety decision, prefer search_weather over assess_weather_risk.
 
+Comparison rule:
+- If the user compares locations specifically for an outdoor activity or asks
+  which location is safer/suitable/better for an activity, use assess_weather_risk.
+  Do not use get_weather alone for activity-suitability comparisons.
+- If the user only compares weather conditions (temperature, rain, wind, etc.)
+  without an activity/safety decision, use get_weather.
+- For an activity comparison, it is acceptable to call assess_weather_risk for
+  each location so the final answer can compare the risk scores.
+
 Do not use assess_weather_risk merely because the question contains the word
 "risk". Use it when the user wants a location/activity-specific decision.
-You may call multiple tools for comparisons. Never invent weather data.
-Give concise, actionable answers in Celsius and km/h.
+Never invent weather data. Give concise, actionable answers in Celsius and km/h.
 """.strip()
 
 AGENT_TOOLS = {
