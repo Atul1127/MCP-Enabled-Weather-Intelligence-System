@@ -1,0 +1,14 @@
+[
+  {"id":"weather_current_001","query":"What is the current weather in Kolkata?","expected_tools":["get_weather"],"expected_location":"Kolkata"},
+  {"id":"weather_forecast_001","query":"What will the weather be like in Delhi tomorrow?","expected_tools":["get_weather"],"expected_location":"Delhi"},
+  {"id":"risk_001","query":"Is Kolkata suitable for outdoor activities tomorrow? Explain the main risks.","expected_tools":["assess_weather_risk"],"expected_location":"Kolkata"},
+  {"id":"risk_002","query":"Would Mumbai be safe for cycling tomorrow?","expected_tools":["assess_weather_risk"],"expected_location":"Mumbai"},
+  {"id":"risk_003","query":"Is Jaipur suitable for a hike tomorrow?","expected_tools":["assess_weather_risk"],"expected_location":"Jaipur"},
+  {"id":"knowledge_001","query":"What does a high weather risk score mean?","expected_tools":["search_weather"]},
+  {"id":"knowledge_002","query":"What weather conditions are generally dangerous for outdoor activities?","expected_tools":["search_weather"]},
+  {"id":"comparison_001","query":"Compare the current weather in Kolkata and Delhi.","expected_tools":["get_weather"],"expected_locations":["Kolkata","Delhi"]},
+  {"id":"comparison_002","query":"Compare Kolkata and Mumbai for outdoor activities tomorrow.","expected_tools":["assess_weather_risk"],"expected_locations":["Kolkata","Mumbai"]},
+  {"id":"risk_004","query":"Should I plan an outdoor event in Bengaluru tomorrow?","expected_tools":["assess_weather_risk"],"expected_location":"Bengaluru"},
+  {"id":"weather_current_002","query":"Tell me the temperature and wind speed in Chennai right now.","expected_tools":["get_weather"],"expected_location":"Chennai"},
+  {"id":"knowledge_003","query":"Explain how weather risk is assessed for an activity.","expected_tools":["search_weather"]}
+]
