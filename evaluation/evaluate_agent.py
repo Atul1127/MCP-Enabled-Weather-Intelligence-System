@@ -6,9 +6,15 @@ import argparse
 import asyncio
 import json
 import os
+import sys
 import time
 from pathlib import Path
 from typing import Any
+
+# Allow `python evaluation/evaluate_agent.py` to import modules from the repo root.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from ollama import AsyncClient
 
