@@ -9,8 +9,7 @@ python-dotenv>=1.0.1
 sentence-transformers>=3.0.0
 torch>=2.1.0
 
-# Local LLM runtime with current tool-calling support.
-ollama>=0.6.2,<0.7.0
+google-genai>=1.0.0
 
 rank-bm25>=0.2.2
 
