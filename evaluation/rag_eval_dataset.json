@@ -1,0 +1,16 @@
+{
+  "cases": [
+    {"id":"rainfall_01","question":"What conditions are commonly associated with heavy rainfall?","required_topics":["heavy rainfall","atmospheric moisture","upward motion"],"expected_source_topics":["heavy rainfall"]},
+    {"id":"rainfall_02","question":"Why can thunderstorms produce heavy rainfall?","required_topics":["thunderstorm","heavy rainfall"],"expected_source_topics":["thunderstorm"]},
+    {"id":"monsoon_01","question":"What weather pattern can increase rainfall during the Indian monsoon?","required_topics":["monsoon","rainfall"],"expected_source_topics":["monsoon"]},
+    {"id":"flood_01","question":"What weather conditions can increase flood risk?","required_topics":["heavy rainfall","flood"],"expected_source_topics":["flood"]},
+    {"id":"heat_01","question":"What conditions are associated with dangerous heat?","required_topics":["heat","temperature"],"expected_source_topics":["heat"]},
+    {"id":"heat_02","question":"Why can high humidity make hot weather feel worse?","required_topics":["humidity","apparent temperature"],"expected_source_topics":["heat"]},
+    {"id":"forecast_01","question":"What does precipitation probability mean in a forecast?","required_topics":["precipitation probability","forecast"],"expected_source_topics":["forecast"]},
+    {"id":"forecast_02","question":"Why can a weather forecast be uncertain?","required_topics":["forecast uncertainty","uncertainty"],"expected_source_topics":["forecast"]},
+    {"id":"codes_01","question":"What does a WMO weather code represent?","required_topics":["WMO","weather code"],"expected_source_topics":["weather codes"]},
+    {"id":"outdoor_01","question":"What weather factors should be considered before outdoor activity?","required_topics":["rain","heat","thunderstorm","wind"],"expected_source_topics":["outdoor"]},
+    {"id":"wind_01","question":"Why is strong wind relevant to outdoor activity decisions?","required_topics":["wind","outdoor"],"expected_source_topics":["outdoor"]},
+    {"id":"uncertainty_01","question":"How should uncertainty be communicated when discussing weather forecasts?","required_topics":["uncertainty","forecast"],"expected_source_topics":["forecast"]}
+  ]
+}
