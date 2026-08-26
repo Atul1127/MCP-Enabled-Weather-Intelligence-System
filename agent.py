@@ -33,7 +33,9 @@ Use tools for evidence and never invent weather facts.
 Current conditions: current_summary from get_weather is authoritative. Never use daily
 forecast fields for current sky condition, temperature, or time of day.
 Future conditions: never use current fields as tomorrow's forecast.
-Comparisons: call forecast/risk tools separately for every location.
+Comparisons: call forecast/risk tools separately for every location. Do not finalize a
+comparison after receiving only the first location's result; collect all requested
+locations before answering.
 RAG failure: if search_weather/ask_weather fails or returns success=false, do not answer
 from general model knowledge; report grounded retrieval is unavailable.
 RAG citations: when using search_weather/ask_weather, preserve [S1], [S2], etc. from the
@@ -60,6 +62,22 @@ def _is_simple_current_weather_query(query: str) -> bool:
         r"\bwhat(?:'s| is) the weather\b", r"\bhow is the weather\b",
     )
     return any(re.search(pattern, text) for pattern in patterns)
+
+
+def _is_comparison_query(query: str) -> bool:
+    text = query.lower().strip()
+    return any(
+        phrase in text
+        for phrase in (
+            "compare ",
+            "compare the ",
+            "which is better",
+            "which would be better",
+            "between ",
+            "versus ",
+            " vs ",
+        )
+    )
 
 
 def _render_current_weather(result: dict[str, Any]) -> str | None:
@@ -147,6 +165,7 @@ async def run_agent(query: str) -> dict[str, Any]:
     emit("agent.start", trace_id=state.trace_id, query=query, model=MODEL)
     ollama = AsyncClient()
     simple_current = _is_simple_current_weather_query(query)
+    comparison_query = _is_comparison_query(query)
     retrieval_failure = False
 
     async with connect() as session:
@@ -239,7 +258,8 @@ async def run_agent(query: str) -> dict[str, Any]:
                         }
 
                 if (
-                    name == "get_forecast"
+                    not comparison_query
+                    and name == "get_forecast"
                     and isinstance(result, dict)
                     and result.get("success")
                     and any(x in query.lower() for x in ("tomorrow", "forecast", "weather be like"))
