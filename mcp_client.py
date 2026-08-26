@@ -16,12 +16,7 @@ SERVER_PATH = os.path.join(PROJECT_ROOT, "mcp_server.py")
 
 
 def _python_executable() -> str:
-    """Return the Python interpreter that has the project's dependencies.
-
-    Chainlit may itself be installed globally, so sys.executable can point at
-    global Python. The MCP server must run with the same virtualenv that has
-    the MCP, Gemini, and RAG dependencies installed.
-    """
+    """Return the Python interpreter that has the project's dependencies."""
     configured = os.environ.get("WEATHER_PYTHON")
     if configured and os.path.isfile(configured):
         return configured
@@ -35,26 +30,41 @@ def _python_executable() -> str:
     venv_python = os.path.join(PROJECT_ROOT, ".venv", "Scripts", "python.exe")
     if os.path.isfile(venv_python):
         return venv_python
-
     return current
 
 
 @asynccontextmanager
 async def connect(trace_id: str | None = None) -> AsyncIterator[ClientSession]:
-    """Open one real MCP stdio session and propagate the local trace ID."""
+    """Open an MCP stdio session using the project virtualenv.
+
+    The server working directory and interpreter are explicit because Chainlit
+    may be launched by a global Python installation. MCP stdout is reserved
+    for JSON-RPC; startup diagnostics are therefore routed to stderr by the
+    server.
+    """
+    python = _python_executable()
     server_env = os.environ.copy()
-    server_env["WEATHER_PYTHON"] = _python_executable()
+    server_env["WEATHER_PYTHON"] = python
+    server_env["PYTHONUNBUFFERED"] = "1"
     if trace_id:
         server_env["WEATHER_TRACE_ID"] = trace_id
+
     server_params = StdioServerParameters(
-        command=_python_executable(),
+        command=python,
         args=[SERVER_PATH],
         env=server_env,
+        cwd=PROJECT_ROOT,
     )
-    async with stdio_client(server_params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            yield session
+
+    try:
+        async with stdio_client(server_params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                yield session
+    except Exception as exc:
+        raise RuntimeError(
+            f"MCP server failed to initialize using {python}: {exc}"
+        ) from exc
 
 
 def _tool_schema(tool: Any) -> dict[str, Any]:
@@ -86,7 +96,11 @@ async def discover_tools(session: ClientSession) -> list[dict[str, Any]]:
     return [_tool_schema(tool) for tool in tools]
 
 
-async def call_tool(session: ClientSession, name: str, arguments: dict[str, Any] | None = None) -> Any:
+async def call_tool(
+    session: ClientSession,
+    name: str,
+    arguments: dict[str, Any] | None = None,
+) -> Any:
     """Call an MCP tool through the live protocol session."""
     result = await session.call_tool(name, arguments=arguments or {})
     if result.structured_content is not None:
