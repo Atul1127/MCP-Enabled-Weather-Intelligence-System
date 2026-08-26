@@ -3,7 +3,6 @@
 No external telemetry service is required. Events are emitted as JSON Lines so
 runs can be inspected locally and shipped to another backend later.
 """
-
 from __future__ import annotations
 
 import contextvars
@@ -28,12 +27,7 @@ def new_span_id() -> str:
 
 
 def emit(event: str, *, trace_id: str, **fields: Any) -> None:
-    payload = {
-        "timestamp": time.time(),
-        "event": event,
-        "trace_id": trace_id,
-        **fields,
-    }
+    payload = {"timestamp": time.time(), "event": event, "trace_id": trace_id, **fields}
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with LOG_PATH.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
@@ -41,18 +35,13 @@ def emit(event: str, *, trace_id: str, **fields: Any) -> None:
 
 @contextmanager
 def span(name: str, *, trace_id: str, **fields: Any) -> Iterator[dict[str, Any]]:
-    started = time.perf_counter()
-    span_id = new_span_id()
-    parent_span_id = _CURRENT_SPAN.get()
-    token = _CURRENT_SPAN.set(span_id)
+    started = time.perf_counter(); span_id = new_span_id(); parent_span_id = _CURRENT_SPAN.get(); token = _CURRENT_SPAN.set(span_id)
     emit("span.start", trace_id=trace_id, span=name, span_id=span_id, parent_span_id=parent_span_id, **fields)
     result: dict[str, Any] = {}
     try:
-        yield result
-        result["ok"] = True
+        yield result; result["ok"] = True
     except Exception as exc:
-        result.update(ok=False, error=str(exc))
-        raise
+        result.update(ok=False, error=str(exc)); raise
     finally:
         result["latency_ms"] = round((time.perf_counter() - started) * 1000, 2)
         emit("span.end", trace_id=trace_id, span=name, span_id=span_id, parent_span_id=parent_span_id, **result)
@@ -60,16 +49,12 @@ def span(name: str, *, trace_id: str, **fields: Any) -> Iterator[dict[str, Any]]
 
 
 def read_trace(trace_id: str) -> list[dict[str, Any]]:
-    if not LOG_PATH.exists():
-        return []
+    if not LOG_PATH.exists(): return []
     events: list[dict[str, Any]] = []
     for line in LOG_PATH.read_text(encoding="utf-8").splitlines():
-        try:
-            item = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if item.get("trace_id") == trace_id:
-            events.append(item)
+        try: item = json.loads(line)
+        except json.JSONDecodeError: continue
+        if item.get("trace_id") == trace_id: events.append(item)
     return events
 
 
@@ -77,11 +62,14 @@ def summarize_trace(trace_id: str) -> dict[str, Any]:
     events = read_trace(trace_id)
     spans = [e for e in events if e.get("event") == "span.end"]
     tools = [e for e in events if e.get("event") == "agent.tool"]
+    timestamps = [float(e.get("timestamp")) for e in events if e.get("timestamp") is not None]
+    wall_clock_ms = round((max(timestamps) - min(timestamps)) * 1000, 2) if len(timestamps) >= 2 else 0.0
     return {
         "trace_id": trace_id,
         "events": len(events),
         "tool_calls": len(tools),
         "tools": [e.get("tool") for e in tools],
         "spans": spans,
-        "total_latency_ms": max((float(e.get("latency_ms", 0)) for e in spans), default=0.0),
+        "wall_clock_latency_ms": wall_clock_ms,
+        "max_span_latency_ms": max((float(e.get("latency_ms", 0)) for e in spans), default=0.0),
     }
