@@ -4,11 +4,11 @@ from datetime import datetime
 from typing import Any
 import os
 import sys
-from mcp.server import MCPServer
+from mcp.server.fastmcp import FastMCP
 import advanced_rag, lakebase, weather_client
 from observability import emit, span
 
-mcp = MCPServer("indian-weather-intelligence")
+mcp = FastMCP("indian-weather-intelligence")
 
 
 def _warmup_rag() -> None:
@@ -18,7 +18,6 @@ def _warmup_rag() -> None:
     try:
         advanced_rag.reranker()
     except Exception as exc:
-        # stdout is the MCP JSON-RPC transport; never write diagnostics there.
         print(f"RAG model preload warning: {exc}", file=sys.stderr, flush=True)
 
 
