@@ -51,8 +51,7 @@ class AgentState:
 
 def _is_simple_current_weather_query(query: str) -> bool:
     text = query.lower().strip()
-    if any(x in text for x in ("tomorrow", "forecast", "next week", "this week")):
-        return False
+    if any(x in text for x in ("tomorrow", "forecast", "next week", "this week")): return False
     patterns = (r"\bcurrent weather\b", r"\bcurrent conditions?\b", r"\bweather right now\b", r"\bweather now\b", r"\bwhat(?:'s| is) the weather\b", r"\bhow is the weather\b")
     return any(re.search(pattern, text) for pattern in patterns)
 
@@ -118,8 +117,7 @@ async def run_agent(query: str) -> dict[str, Any]:
     ollama = AsyncClient(); simple_current = _is_simple_current_weather_query(query); comparison_query = _is_comparison_query(query); retrieval_failure = False
 
     async with connect(trace_id=state.trace_id) as session:
-        discovered = await discover_tools(session)
-        tools = [t for t in discovered if t["function"]["name"] in ALLOWED_TOOLS]
+        discovered = await discover_tools(session); tools = [t for t in discovered if t["function"]["name"] in ALLOWED_TOOLS]
         messages: list[Any] = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": query}]
 
         for round_no in range(1, MAX_ROUNDS + 1):
@@ -156,10 +154,18 @@ async def run_agent(query: str) -> dict[str, Any]:
                 messages.append({"role": "tool", "tool_name": name, "content": json.dumps(result, ensure_ascii=False, default=str)})
                 if simple_current and name == "get_weather" and isinstance(result, dict) and result.get("success"):
                     answer = _render_current_weather(result)
-                    if answer: return {"success": True, "answer": answer, "trace_id": state.trace_id, "rounds": round_no, "tool_calls": state.tool_calls, "observations": state.observations, "deterministic": True}
+                    if answer:
+                        emit("agent.end", trace_id=state.trace_id, rounds=round_no, tools=len(state.tool_calls), latency_ms=round((time.perf_counter() - started) * 1000, 2), deterministic=True)
+                        return {"success": True, "answer": answer, "trace_id": state.trace_id, "rounds": round_no, "tool_calls": state.tool_calls, "observations": state.observations, "deterministic": True}
                 if (not comparison_query and name == "get_forecast" and isinstance(result, dict) and result.get("success") and any(x in query.lower() for x in ("tomorrow", "forecast", "weather be like"))):
                     answer = _render_forecast(result)
-                    if answer: return {"success": True, "answer": answer, "trace_id": state.trace_id, "rounds": round_no, "tool_calls": state.tool_calls, "observations": state.observations, "deterministic": True}
+                    if answer:
+                        emit("agent.end", trace_id=state.trace_id, rounds=round_no, tools=len(state.tool_calls), latency_ms=round((time.perf_counter() - started) * 1000, 2), deterministic=True)
+                        return {"success": True, "answer": answer, "trace_id": state.trace_id, "rounds": round_no, "tool_calls": state.tool_calls, "observations": state.observations, "deterministic": True}
+                if name in {"search_weather", "ask_weather"} and success and len(calls) == 1 and len(state.observations) == 1 and isinstance(result, dict) and result.get("answer"):
+                    answer = _append_rag_sources(str(result["answer"]), state.observations)
+                    emit("agent.end", trace_id=state.trace_id, rounds=round_no, tools=len(state.tool_calls), latency_ms=round((time.perf_counter() - started) * 1000, 2), direct_rag=True)
+                    return {"success": True, "answer": answer, "trace_id": state.trace_id, "rounds": round_no, "tool_calls": state.tool_calls, "observations": state.observations, "sources": _rag_sources(state.observations), "deterministic": True}
 
         return {"success": False, "answer": "I could not gather enough evidence within the agent round limit.", "trace_id": state.trace_id, "rounds": MAX_ROUNDS, "tool_calls": state.tool_calls, "observations": state.observations}
 
