@@ -63,12 +63,34 @@ def _gemini_retryable(exc: Exception) -> bool:
     )
 
 
+def _gemini_thinking_level() -> str:
+    """Return the Gemini 3 thinking level used for low-latency application paths."""
+    level = os.environ.get("GEMINI_THINKING_LEVEL", "low").strip().lower()
+    allowed = {"minimal", "low", "medium", "high"}
+    if level not in allowed:
+        raise ValueError(
+            f"Unsupported GEMINI_THINKING_LEVEL: {level!r}. "
+            "Use minimal, low, medium, or high."
+        )
+    return level
+
+
+def _gemini_max_output_tokens() -> int:
+    """Bound output length because this application needs concise grounded answers."""
+    value = int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "600"))
+    if value < 64:
+        raise ValueError("GEMINI_MAX_OUTPUT_TOKENS must be at least 64")
+    return value
+
+
 def _generate_gemini(contents: str, *, temperature: float) -> tuple[str, str]:
     """Generate with retry + model fallback for transient provider failures."""
     from google.genai import types
 
     client = _gemini_client()
     errors: list[str] = []
+    thinking_level = _gemini_thinking_level()
+    max_output_tokens = _gemini_max_output_tokens()
 
     for model in _gemini_models():
         for attempt in range(2):
@@ -78,6 +100,10 @@ def _generate_gemini(contents: str, *, temperature: float) -> tuple[str, str]:
                     contents=contents,
                     config=types.GenerateContentConfig(
                         temperature=temperature,
+                        max_output_tokens=max_output_tokens,
+                        thinking_config=types.ThinkingConfig(
+                            thinking_level=thinking_level
+                        ),
                         automatic_function_calling=types.AutomaticFunctionCallingConfig(
                             disable=True
                         ),
