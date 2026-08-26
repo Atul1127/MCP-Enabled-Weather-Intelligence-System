@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 import os
+import sys
 from mcp.server import MCPServer
 import advanced_rag, lakebase, weather_client
 from observability import emit, span
@@ -11,13 +12,14 @@ mcp = MCPServer("indian-weather-intelligence")
 
 
 def _warmup_rag() -> None:
-    """Preload local RAG models before serving requests."""
-    if os.environ.get("WEATHER_RAG_PRELOAD", "1").strip().lower() in {"0", "false", "no", "off"}:
+    """Optionally preload local RAG models before serving requests."""
+    if os.environ.get("WEATHER_RAG_PRELOAD", "0").strip().lower() in {"0", "false", "no", "off"}:
         return
     try:
         advanced_rag.reranker()
     except Exception as exc:
-        print(f"RAG model preload warning: {exc}")
+        # stdout is the MCP JSON-RPC transport; never write diagnostics there.
+        print(f"RAG model preload warning: {exc}", file=sys.stderr, flush=True)
 
 
 def _target_date(value: str | None, daily: dict[str, Any]) -> str:
