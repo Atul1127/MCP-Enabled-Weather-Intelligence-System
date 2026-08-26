@@ -7,6 +7,25 @@ import advanced_rag, lakebase, weather_client
 
 mcp = MCPServer("indian-weather-intelligence")
 
+
+def _warmup_rag() -> None:
+    """Preload local RAG models before serving requests.
+
+    The cross-encoder has a one-time model-load cost (~10s on the local
+    machine). Loading it during MCP startup keeps that cold-start cost out of
+    the first search_weather tool span and makes request latency representative
+    of the warm service path. Set WEATHER_RAG_PRELOAD=0 to disable this.
+    """
+    if __import__("os").environ.get("WEATHER_RAG_PRELOAD", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return
+    try:
+        advanced_rag.reranker()
+    except Exception as exc:
+        # Do not prevent the MCP server from starting. The RAG path can still
+        # surface the model-loading error when reranking is actually requested.
+        print(f"RAG model preload warning: {exc}")
+
+
 def _target_date(value: str | None, daily: dict[str, Any]) -> str:
     dates=daily.get("time") or []
     if not dates: raise ValueError("Forecast contains no dates")
@@ -117,4 +136,6 @@ def database_health() -> dict[str, Any]:
         connected=lakebase.check_connection(); return {"success":connected,"backend":lakebase.DATABASE_BACKEND,"status":"ok" if connected else "unavailable"}
     except Exception as exc: return {"success":False,"backend":lakebase.DATABASE_BACKEND,"status":"error","error":str(exc)}
 
-if __name__=="__main__": mcp.run()
+if __name__=="__main__":
+    _warmup_rag()
+    mcp.run()
