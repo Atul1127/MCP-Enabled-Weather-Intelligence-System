@@ -11,20 +11,43 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 
-SERVER_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    "mcp_server.py",
-)
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+SERVER_PATH = os.path.join(PROJECT_ROOT, "mcp_server.py")
+
+
+def _python_executable() -> str:
+    """Return the Python interpreter that has the project's dependencies.
+
+    Chainlit may itself be installed globally, so sys.executable can point at
+    global Python. The MCP server must run with the same virtualenv that has
+    the MCP, Gemini, and RAG dependencies installed.
+    """
+    configured = os.environ.get("WEATHER_PYTHON")
+    if configured and os.path.isfile(configured):
+        return configured
+
+    current = os.path.abspath(sys.executable)
+    if os.path.normcase(os.path.dirname(current)).endswith(
+        os.path.normcase(os.path.join(".venv", "Scripts"))
+    ):
+        return current
+
+    venv_python = os.path.join(PROJECT_ROOT, ".venv", "Scripts", "python.exe")
+    if os.path.isfile(venv_python):
+        return venv_python
+
+    return current
 
 
 @asynccontextmanager
 async def connect(trace_id: str | None = None) -> AsyncIterator[ClientSession]:
     """Open one real MCP stdio session and propagate the local trace ID."""
     server_env = os.environ.copy()
+    server_env["WEATHER_PYTHON"] = _python_executable()
     if trace_id:
         server_env["WEATHER_TRACE_ID"] = trace_id
     server_params = StdioServerParameters(
-        command=sys.executable,
+        command=_python_executable(),
         args=[SERVER_PATH],
         env=server_env,
     )
