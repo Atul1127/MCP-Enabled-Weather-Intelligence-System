@@ -61,6 +61,14 @@ def _is_comparison_query(query: str) -> bool:
     return any(phrase in text for phrase in ("compare ", "compare the ", "which is better", "which would be better", "between ", "versus ", " vs "))
 
 
+def _is_direct_rag_query(query: str) -> bool:
+    """Fast-route obvious single-tool conceptual RAG questions."""
+    text = query.lower().strip()
+    if _is_simple_current_weather_query(query) or _is_comparison_query(query): return False
+    if any(x in text for x in ("tomorrow", "today", "right now", "this evening", "tonight", "forecast", "next week")): return False
+    return any(marker in text for marker in ("typically", "usually", "associated with", "what causes", "what conditions", "why does", "how does", "meaning of", "what is", "what are"))
+
+
 def _render_current_weather(result: dict[str, Any]) -> str | None:
     summary = result.get("current_summary")
     if not isinstance(summary, dict): return None
@@ -119,6 +127,22 @@ async def run_agent(query: str) -> dict[str, Any]:
     async with connect(trace_id=state.trace_id) as session:
         discovered = await discover_tools(session); tools = [t for t in discovered if t["function"]["name"] in ALLOWED_TOOLS]
         messages: list[Any] = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": query}]
+
+        if _is_direct_rag_query(query):
+            with span("agent.route", trace_id=state.trace_id, route="direct_rag") as info:
+                with span("tool.search_weather", trace_id=state.trace_id, tool="search_weather") as tool_info:
+                    result = await call_tool(session, "search_weather", {"query": query})
+                    tool_info["success"] = bool(result.get("success", True)) if isinstance(result, dict) else True
+                state.tool_calls.append({"name": "search_weather", "arguments": {"query": query}})
+                state.observations.append({"tool": "search_weather", "result": result})
+                info["tool"] = "search_weather"; info["success"] = bool(result.get("success", True)) if isinstance(result, dict) else True
+            if not isinstance(result, dict) or not result.get("success"):
+                answer = "I could not produce a grounded answer because the weather knowledge retrieval service failed. Please retry after the retrieval service is available."
+                return {"success": False, "answer": answer, "trace_id": state.trace_id, "rounds": 1, "tool_calls": state.tool_calls, "observations": state.observations}
+            answer = str(result.get("answer") or "The weather knowledge retrieval tool returned no grounded answer.")
+            answer = _append_rag_sources(answer.strip(), state.observations)
+            emit("agent.end", trace_id=state.trace_id, rounds=1, tools=1, route="direct_rag", latency_ms=round((time.perf_counter() - started) * 1000, 2))
+            return {"success": True, "answer": answer, "trace_id": state.trace_id, "rounds": 1, "tool_calls": state.tool_calls, "observations": state.observations, "sources": _rag_sources(state.observations), "route": "direct_rag"}
 
         for round_no in range(1, MAX_ROUNDS + 1):
             with span("agent.reason", trace_id=state.trace_id, round=round_no) as info:
