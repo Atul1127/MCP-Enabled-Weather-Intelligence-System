@@ -10,12 +10,12 @@ _GEMINI_CLIENT: Any | None = None
 
 
 def provider_name() -> str:
-    return os.environ.get("WEATHER_LLM_PROVIDER", "ollama").strip().lower()
+    return os.environ.get("WEATHER_LLM_PROVIDER", "gemini").strip().lower()
 
 
 def model_name() -> str:
     if provider_name() == "gemini":
-        # Stable Flash is the default; callers can override this explicitly.
+        # Gemini is the default cloud provider; callers can override explicitly.
         return os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
     return os.environ.get("WEATHER_LLM_MODEL", "llama3.2:3b")
 
@@ -71,8 +71,6 @@ def _generate_gemini(contents: str, *, temperature: float) -> tuple[str, str]:
     errors: list[str] = []
 
     for model in _gemini_models():
-        # Retry the same model briefly before falling back. This handles transient
-        # 503/429 capacity spikes without hiding persistent model problems.
         for attempt in range(2):
             try:
                 response = client.models.generate_content(
@@ -92,8 +90,6 @@ def _generate_gemini(contents: str, *, temperature: float) -> tuple[str, str]:
             except Exception as exc:
                 errors.append(f"{model} attempt {attempt + 1}: {exc}")
                 if not _gemini_retryable(exc):
-                    # Authentication, invalid model, malformed request, etc. are
-                    # deterministic failures and should not be retried blindly.
                     raise
                 if attempt == 0:
                     time.sleep(1.5)
@@ -107,9 +103,8 @@ def _generate_gemini(contents: str, *, temperature: float) -> tuple[str, str]:
 def generate_text(messages: list[dict[str, str]], *, temperature: float = 0.0) -> str:
     """Generate text through the configured provider.
 
-    Provider selection is controlled by WEATHER_LLM_PROVIDER=ollama|gemini.
-    Gemini uses GEMINI_API_KEY from the environment and automatically falls back
-    across configured Flash models when a transient 503/429/5xx occurs.
+    Provider selection is controlled by WEATHER_LLM_PROVIDER=gemini|ollama.
+    Gemini is the repository default and uses GEMINI_API_KEY from the environment.
     """
     provider = provider_name()
 
@@ -134,14 +129,12 @@ def generate_text(messages: list[dict[str, str]], *, temperature: float = 0.0) -
         except Exception as exc:
             raise RuntimeError(f"Gemini generation failed: {exc}") from exc
 
-        # Expose the actual model used for observability without changing the
-        # public return type expected by the rest of the application.
         os.environ["GEMINI_LAST_MODEL"] = used_model
         return text
 
     if provider != "ollama":
         raise ValueError(
-            f"Unsupported WEATHER_LLM_PROVIDER: {provider!r}. Use 'ollama' or 'gemini'."
+            f"Unsupported WEATHER_LLM_PROVIDER: {provider!r}. Use 'gemini' or 'ollama'."
         )
 
     import ollama
