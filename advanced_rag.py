@@ -1,10 +1,4 @@
-"""Advanced local-first hybrid RAG for the weather knowledge base.
-
-Pipeline:
-query analysis -> optional multi-query expansion -> metadata filtering -> dense + BM25
--> confidence-aware RRF -> adaptive cross-encoder reranking -> context compression
--> grounded answer through configurable Ollama/Gemini provider.
-"""
+"""Advanced local-first hybrid RAG for the weather knowledge base."""
 from __future__ import annotations
 
 import json
@@ -28,6 +22,8 @@ DENSE_CANDIDATES = int(os.environ.get("WEATHER_VECTOR_CANDIDATES", "30"))
 BM25_CANDIDATES = int(os.environ.get("WEATHER_BM25_CANDIDATES", "30"))
 RERANK_CANDIDATES = int(os.environ.get("WEATHER_RERANK_CANDIDATES", "5"))
 RERANK_MIN_CANDIDATES = int(os.environ.get("WEATHER_RERANK_MIN_CANDIDATES", "2"))
+SIMPLE_FUSED_CANDIDATES = int(os.environ.get("WEATHER_SIMPLE_FUSED_CANDIDATES", "3"))
+SIMPLE_RERANK_TOP_K = int(os.environ.get("WEATHER_SIMPLE_RERANK_TOP_K", "2"))
 MAX_CONTEXT_CHARS = int(os.environ.get("WEATHER_RAG_MAX_CONTEXT_CHARS", "9000"))
 
 _reranker: CrossEncoder | None = None
@@ -46,6 +42,15 @@ def _should_expand_query(query: str) -> bool:
     if len(words) <= 10:
         return False
     return any(marker in text for marker in ("compare", "difference", "versus", " vs ", "why", "how does", "what factors", "relationship", "associated", "conditions", "typical", "forecast", "outdoor"))
+
+
+def _is_simple_rag_query(query: str) -> bool:
+    text = query.lower().strip()
+    if len(re.findall(r"\w+", text)) > 12:
+        return False
+    if any(marker in text for marker in ("compare", "difference", "versus", " vs ", "multiple", "between", "relationship")):
+        return False
+    return True
 
 
 def _parse_expansion(raw: str) -> list[str]:
@@ -166,17 +171,20 @@ Keep the answer concise and useful."""
 def answer(query: str, top_k: int = DEFAULT_TOP_K, location: str | None = None, state: str | None = None) -> dict[str, Any]:
     trace_id = os.environ.get("WEATHER_TRACE_ID") or new_trace_id(); started = time.perf_counter()
     if not query or not query.strip(): raise ValueError("Query cannot be empty")
-    query = query.strip(); emit("rag.start", trace_id=trace_id, query=query, top_k=top_k, backend="local", provider=provider_name(), model=model_name())
+    query = query.strip(); simple_query = _is_simple_rag_query(query)
+    effective_fused_k = min(RERANK_CANDIDATES, SIMPLE_FUSED_CANDIDATES) if simple_query else RERANK_CANDIDATES
+    effective_top_k = min(top_k, SIMPLE_RERANK_TOP_K) if simple_query else top_k
+    emit("rag.start", trace_id=trace_id, query=query, top_k=effective_top_k, backend="local", provider=provider_name(), model=model_name(), retrieval_mode="simple" if simple_query else "complex")
     try:
         store = get_store(); allowed = store.filtered_rows(location=location, state=state); variants = expand_query(query, trace_id)
         with span("retrieval", trace_id=trace_id) as info:
             dense_sets = [store.dense_search(q, DENSE_CANDIDATES, allowed) for q in variants]
             sparse_sets = [store.bm25_search(q, BM25_CANDIDATES, allowed) for q in variants]
             typed_sets = [("dense", rows) for rows in dense_sets] + [("bm25", rows) for rows in sparse_sets]
-            fused = confidence_aware_rrf(typed_sets, RERANK_CANDIDATES)
-            info.update(backend="local", corpus=len(store.rows), filtered=len(allowed), query_variants=len(variants), dense_candidates=sum(len(x) for x in dense_sets), bm25_candidates=sum(len(x) for x in sparse_sets), fused_candidates=len(fused), fusion="confidence-aware-rrf")
+            fused = confidence_aware_rrf(typed_sets, effective_fused_k)
+            info.update(backend="local", corpus=len(store.rows), filtered=len(allowed), query_variants=len(variants), dense_candidates=sum(len(x) for x in dense_sets), bm25_candidates=sum(len(x) for x in sparse_sets), fused_candidates=len(fused), fusion="confidence-aware-rrf", mode="simple" if simple_query else "complex")
         with span("reranking", trace_id=trace_id) as info:
-            ranked = rerank(query, fused, min(top_k, len(fused))); info["candidates"] = len(fused); info["returned"] = len(ranked); info["model"] = RERANKER_MODEL if len(fused) >= RERANK_MIN_CANDIDATES else "skipped-small-candidate-set"
+            ranked = rerank(query, fused, min(effective_top_k, len(fused))); info["candidates"] = len(fused); info["returned"] = len(ranked); info["model"] = RERANKER_MODEL if len(fused) >= RERANK_MIN_CANDIDATES else "skipped-small-candidate-set"; info["mode"] = "simple" if simple_query else "complex"
         with span("context_compression", trace_id=trace_id) as info:
             context, sources = compress_context(query, ranked); info["sources"] = len(sources); info["context_chars"] = len(context)
         if not context:
@@ -184,7 +192,7 @@ def answer(query: str, top_k: int = DEFAULT_TOP_K, location: str | None = None, 
         with span("generation", trace_id=trace_id, provider=provider_name(), model=model_name()) as info:
             text = generate_text([{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": f"Question:\n{query}\n\nRetrieved evidence:\n{context}"}], temperature=0)
             info["answer_chars"] = len(text)
-        text = _ensure_citations(text, sources); latency_ms = round((time.perf_counter() - started) * 1000, 2); emit("rag.end", trace_id=trace_id, latency_ms=latency_ms, source_count=len(sources), provider=provider_name(), model=model_name())
-        return {"success": True, "query": query, "answer": text, "retrieval": {"backend": "local", "strategy": "optional multi-query + dense + BM25 + confidence-aware RRF + adaptive cross-encoder + compression", "corpus": len(store.rows), "filtered": len(allowed), "query_variants": len(variants), "fused_candidates": len(fused), "returned": len(ranked)}, "sources": sources, "trace_id": trace_id, "latency_ms": latency_ms, "llm_provider": provider_name(), "llm_model": model_name()}
+        text = _ensure_citations(text, sources); latency_ms = round((time.perf_counter() - started) * 1000, 2); emit("rag.end", trace_id=trace_id, latency_ms=latency_ms, source_count=len(sources), provider=provider_name(), model=model_name(), retrieval_mode="simple" if simple_query else "complex")
+        return {"success": True, "query": query, "answer": text, "retrieval": {"backend": "local", "strategy": "optional multi-query + dense + BM25 + confidence-aware RRF + adaptive cross-encoder + compression", "mode": "simple" if simple_query else "complex", "corpus": len(store.rows), "filtered": len(allowed), "query_variants": len(variants), "fused_candidates": len(fused), "returned": len(ranked)}, "sources": sources, "trace_id": trace_id, "latency_ms": latency_ms, "llm_provider": provider_name(), "llm_model": model_name()}
     except Exception as exc:
         emit("rag.error", trace_id=trace_id, error=str(exc)); return {"success": False, "query": query, "error": str(exc), "trace_id": trace_id}
