@@ -60,7 +60,6 @@ def expand_query(query: str, trace_id: str) -> list[str]:
 
 
 def _confidence(values: list[float], value: float) -> float:
-    """Normalize a retrieval-channel score to a relative 0..1 confidence."""
     if not values:
         return 0.0
     lo, hi = min(values), max(values)
@@ -81,10 +80,7 @@ def confidence_aware_rrf(result_sets: list[tuple[str, list[dict[str, Any]]]], to
                 continue
             raw_score = float(row.get(score_key, 0.0))
             confidence = _confidence(values, raw_score)
-            item = fused.setdefault(
-                key,
-                {**row, "rrf_score": 0.0, "confidence_score": 0.0, "retrieval_ranks": [], "retrieval_channels": []},
-            )
+            item = fused.setdefault(key, {**row, "rrf_score": 0.0, "confidence_score": 0.0, "retrieval_ranks": [], "retrieval_channels": []})
             item["rrf_score"] += 1.0 / (RRF_K + rank)
             item["confidence_score"] += CONFIDENCE_WEIGHT * confidence / (RRF_K + rank)
             item["retrieval_ranks"].append(rank)
@@ -137,12 +133,7 @@ def compress_context(query: str, documents: list[dict[str, Any]], max_chars: int
 
 
 def _ensure_citations(answer_text: str, sources: list[dict[str, Any]]) -> str:
-    """Enforce a deterministic source-citation contract after LLM generation.
-
-    The model is instructed to cite claims, but local models can omit citations.
-    We never invent citation IDs: every emitted citation comes from the retrieved
-    source metadata. A compact source footer guarantees provenance is retained.
-    """
+    """Enforce a deterministic source-citation contract after LLM generation."""
     if not sources:
         return answer_text.strip()
     valid = [str(source.get("citation")) for source in sources if source.get("citation")]
@@ -163,7 +154,8 @@ Keep the answer concise and useful."""
 
 
 def answer(query: str, top_k: int = DEFAULT_TOP_K, location: str | None = None, state: str | None = None) -> dict[str, Any]:
-    trace_id = new_trace_id(); started = time.perf_counter()
+    trace_id = os.environ.get("WEATHER_TRACE_ID") or new_trace_id()
+    started = time.perf_counter()
     if not query or not query.strip():
         raise ValueError("Query cannot be empty")
     query = query.strip(); emit("rag.start", trace_id=trace_id, query=query, top_k=top_k, backend="local")
@@ -176,7 +168,12 @@ def answer(query: str, top_k: int = DEFAULT_TOP_K, location: str | None = None, 
             typed_sets = [("dense", rows) for rows in dense_sets] + [("bm25", rows) for rows in sparse_sets]
             fused = confidence_aware_rrf(typed_sets, RERANK_CANDIDATES)
             info.update(backend="local", corpus=len(store.rows), filtered=len(allowed), query_variants=len(variants), dense_candidates=sum(len(x) for x in dense_sets), bm25_candidates=sum(len(x) for x in sparse_sets), fused_candidates=len(fused), fusion="confidence-aware-rrf")
-        ranked = rerank(query, fused, top_k); context, sources = compress_context(query, ranked)
+        with span("reranking", trace_id=trace_id) as info:
+            ranked = rerank(query, fused, top_k)
+            info["candidates"] = len(fused); info["returned"] = len(ranked)
+        with span("context_compression", trace_id=trace_id) as info:
+            context, sources = compress_context(query, ranked)
+            info["sources"] = len(sources); info["context_chars"] = len(context)
         if not context:
             emit("rag.no_evidence", trace_id=trace_id)
             return {"success": False, "query": query, "error": "No relevant evidence found in the local weather knowledge base.", "trace_id": trace_id, "retrieval": {"strategy": "multi-query + dense + BM25 + confidence-aware RRF + cross-encoder + compression"}}
