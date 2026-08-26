@@ -5,6 +5,9 @@ import os
 from typing import Any
 
 
+_GEMINI_CLIENT: Any | None = None
+
+
 def provider_name() -> str:
     return os.environ.get("WEATHER_LLM_PROVIDER", "ollama").strip().lower()
 
@@ -15,13 +18,22 @@ def model_name() -> str:
     return os.environ.get("WEATHER_LLM_MODEL", "llama3.2:3b")
 
 
-def _gemini_client():
-    from google import genai
+def _gemini_client() -> Any:
+    """Return one long-lived Gemini client per Python process.
 
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY is not set in the process environment")
-    return genai.Client(api_key=api_key)
+    Do not create a temporary client inline with ``Client().models...`` because
+    the SDK client owns an HTTPX connection pool and can be closed before the
+    request finishes when the temporary object is garbage-collected.
+    """
+    global _GEMINI_CLIENT
+    if _GEMINI_CLIENT is None:
+        from google import genai
+
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError("GEMINI_API_KEY is not set in the process environment")
+        _GEMINI_CLIENT = genai.Client(api_key=api_key)
+    return _GEMINI_CLIENT
 
 
 def generate_text(messages: list[dict[str, str]], *, temperature: float = 0.0) -> str:
