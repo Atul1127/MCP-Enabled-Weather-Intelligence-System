@@ -3,7 +3,7 @@
 Pipeline:
 query analysis -> optional multi-query expansion -> metadata filtering -> dense + BM25
 -> confidence-aware RRF -> adaptive cross-encoder reranking -> context compression
--> grounded Ollama answer.
+-> grounded answer through configurable Ollama/Gemini provider.
 """
 from __future__ import annotations
 
@@ -13,9 +13,9 @@ import re
 import time
 from typing import Any
 
-import ollama
 from sentence_transformers import CrossEncoder
 
+from llm_provider import generate_text, model_name, provider_name
 from local_rag_store import get_store
 from observability import emit, new_trace_id, span
 
@@ -66,15 +66,15 @@ def _parse_expansion(raw: str) -> list[str]:
 
 
 def expand_query(query: str, trace_id: str) -> list[str]:
-    """Use LLM expansion only for complex queries; simple queries skip an LLM round."""
+    """Use the configured LLM only for complex queries; simple queries skip expansion."""
     if not _should_expand_query(query):
         emit("query_expansion.skipped", trace_id=trace_id, reason="simple_query")
         return [query]
     prompt = "Rewrite the weather search query into two short retrieval queries. Preserve location, date, hazard and activity terms. Return JSON only as {\"queries\":[\"...\",\"...\"]}. Query: " + query
-    with span("query_expansion", trace_id=trace_id) as info:
+    with span("query_expansion", trace_id=trace_id, provider=provider_name(), model=model_name()) as info:
         try:
-            response = ollama.chat(model=LLM_MODEL, messages=[{"role": "user", "content": prompt}], options={"temperature": 0})
-            variants = _parse_expansion(response["message"]["content"])
+            raw = generate_text([{"role": "user", "content": prompt}], temperature=0)
+            variants = _parse_expansion(raw)
             if not variants:
                 info.update(ok=False, fallback=True, error="invalid query-expansion JSON")
                 emit("query_expansion.fallback", trace_id=trace_id, error="invalid query-expansion JSON")
@@ -166,7 +166,7 @@ Keep the answer concise and useful."""
 def answer(query: str, top_k: int = DEFAULT_TOP_K, location: str | None = None, state: str | None = None) -> dict[str, Any]:
     trace_id = os.environ.get("WEATHER_TRACE_ID") or new_trace_id(); started = time.perf_counter()
     if not query or not query.strip(): raise ValueError("Query cannot be empty")
-    query = query.strip(); emit("rag.start", trace_id=trace_id, query=query, top_k=top_k, backend="local")
+    query = query.strip(); emit("rag.start", trace_id=trace_id, query=query, top_k=top_k, backend="local", provider=provider_name(), model=model_name())
     try:
         store = get_store(); allowed = store.filtered_rows(location=location, state=state); variants = expand_query(query, trace_id)
         with span("retrieval", trace_id=trace_id) as info:
@@ -181,10 +181,10 @@ def answer(query: str, top_k: int = DEFAULT_TOP_K, location: str | None = None, 
             context, sources = compress_context(query, ranked); info["sources"] = len(sources); info["context_chars"] = len(context)
         if not context:
             emit("rag.no_evidence", trace_id=trace_id); return {"success": False, "query": query, "error": "No relevant evidence found in the local weather knowledge base.", "trace_id": trace_id}
-        with span("generation", trace_id=trace_id, model=LLM_MODEL) as info:
-            response = ollama.chat(model=LLM_MODEL, messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": f"Question:\n{query}\n\nRetrieved evidence:\n{context}"}], options={"temperature": 0})
-            text = response["message"]["content"].strip(); info["answer_chars"] = len(text)
-        text = _ensure_citations(text, sources); latency_ms = round((time.perf_counter() - started) * 1000, 2); emit("rag.end", trace_id=trace_id, latency_ms=latency_ms, source_count=len(sources))
-        return {"success": True, "query": query, "answer": text, "retrieval": {"backend": "local", "strategy": "optional multi-query + dense + BM25 + confidence-aware RRF + adaptive cross-encoder + compression", "corpus": len(store.rows), "filtered": len(allowed), "query_variants": len(variants), "fused_candidates": len(fused), "returned": len(ranked)}, "sources": sources, "trace_id": trace_id, "latency_ms": latency_ms}
+        with span("generation", trace_id=trace_id, provider=provider_name(), model=model_name()) as info:
+            text = generate_text([{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": f"Question:\n{query}\n\nRetrieved evidence:\n{context}"}], temperature=0)
+            info["answer_chars"] = len(text)
+        text = _ensure_citations(text, sources); latency_ms = round((time.perf_counter() - started) * 1000, 2); emit("rag.end", trace_id=trace_id, latency_ms=latency_ms, source_count=len(sources), provider=provider_name(), model=model_name())
+        return {"success": True, "query": query, "answer": text, "retrieval": {"backend": "local", "strategy": "optional multi-query + dense + BM25 + confidence-aware RRF + adaptive cross-encoder + compression", "corpus": len(store.rows), "filtered": len(allowed), "query_variants": len(variants), "fused_candidates": len(fused), "returned": len(ranked)}, "sources": sources, "trace_id": trace_id, "latency_ms": latency_ms, "llm_provider": provider_name(), "llm_model": model_name()}
     except Exception as exc:
         emit("rag.error", trace_id=trace_id, error=str(exc)); return {"success": False, "query": query, "error": str(exc), "trace_id": trace_id}
