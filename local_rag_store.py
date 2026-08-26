@@ -1,14 +1,14 @@
 """Local file-backed retrieval store for zero-cost development.
 
-The local store is intentionally independent of PostgreSQL/Lakebase. It loads
-small JSONL knowledge documents, builds dense embeddings in memory, and exposes
-BM25 + dense search. Production deployments can keep using the database backend.
+The store and embedding model are process-level singletons. This avoids
+rebuilding the BM25 index and dense corpus embeddings on every MCP request.
 """
 from __future__ import annotations
 
 import json
 import os
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 import numpy as np
@@ -24,12 +24,16 @@ CORPUS_PATH = Path(
 
 _model: SentenceTransformer | None = None
 _store: "LocalRagStore | None" = None
+_model_lock = Lock()
+_store_lock = Lock()
 
 
 def _get_model() -> SentenceTransformer:
     global _model
     if _model is None:
-        _model = SentenceTransformer(EMBEDDING_MODEL)
+        with _model_lock:
+            if _model is None:
+                _model = SentenceTransformer(EMBEDDING_MODEL)
     return _model
 
 
@@ -113,7 +117,10 @@ class LocalRagStore:
 
 
 def get_store() -> LocalRagStore:
+    """Return the process-wide RAG store, building it at most once."""
     global _store
     if _store is None:
-        _store = LocalRagStore()
+        with _store_lock:
+            if _store is None:
+                _store = LocalRagStore()
     return _store
