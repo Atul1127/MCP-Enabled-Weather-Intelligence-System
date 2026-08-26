@@ -1,4 +1,4 @@
-"""LLM provider abstraction for local Ollama and Gemini API."""
+"""Gemini-only LLM provider for the weather intelligence system."""
 from __future__ import annotations
 
 import os
@@ -10,14 +10,13 @@ _GEMINI_CLIENT: Any | None = None
 
 
 def provider_name() -> str:
-    return os.environ.get("WEATHER_LLM_PROVIDER", "gemini").strip().lower()
+    """Return the only supported application LLM provider."""
+    return "gemini"
 
 
 def model_name() -> str:
-    if provider_name() == "gemini":
-        # Gemini is the default cloud provider; callers can override explicitly.
-        return os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
-    return os.environ.get("WEATHER_LLM_MODEL", "llama3.2:3b")
+    """Return the configured Gemini model."""
+    return os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
 
 
 def _gemini_models() -> list[str]:
@@ -27,9 +26,7 @@ def _gemini_models() -> list[str]:
         "GEMINI_FALLBACK_MODELS",
         "gemini-3.5-flash-lite,gemini-2.5-flash-lite",
     )
-    models = [primary]
-    models.extend(item.strip() for item in configured.split(",") if item.strip())
-    return list(dict.fromkeys(models))
+    return list(dict.fromkeys([primary] + [item.strip() for item in configured.split(",") if item.strip()]))
 
 
 def _gemini_client() -> Any:
@@ -46,37 +43,19 @@ def _gemini_client() -> Any:
 
 
 def _gemini_retryable(exc: Exception) -> bool:
-    """Return True for transient Gemini capacity/server/rate-limit failures."""
     text = str(exc).upper()
-    return any(
-        marker in text
-        for marker in (
-            "503",
-            "UNAVAILABLE",
-            "429",
-            "RESOURCE_EXHAUSTED",
-            "500",
-            "INTERNAL",
-            "504",
-            "DEADLINE_EXCEEDED",
-        )
-    )
+    return any(marker in text for marker in ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "500", "INTERNAL", "504", "DEADLINE_EXCEEDED"))
 
 
 def _gemini_thinking_level() -> str:
-    """Return the Gemini 3 thinking level used for low-latency application paths."""
     level = os.environ.get("GEMINI_THINKING_LEVEL", "low").strip().lower()
     allowed = {"minimal", "low", "medium", "high"}
     if level not in allowed:
-        raise ValueError(
-            f"Unsupported GEMINI_THINKING_LEVEL: {level!r}. "
-            "Use minimal, low, medium, or high."
-        )
+        raise ValueError(f"Unsupported GEMINI_THINKING_LEVEL: {level!r}. Use minimal, low, medium, or high.")
     return level
 
 
 def _gemini_max_output_tokens() -> int:
-    """Bound output length because this application needs concise grounded answers."""
     value = int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "600"))
     if value < 64:
         raise ValueError("GEMINI_MAX_OUTPUT_TOKENS must be at least 64")
@@ -84,31 +63,22 @@ def _gemini_max_output_tokens() -> int:
 
 
 def _generate_gemini(contents: str, *, temperature: float) -> tuple[str, str]:
-    """Generate with retry + model fallback for transient provider failures."""
+    """Generate with transient retry and Gemini model fallback."""
     from google.genai import types
 
     client = _gemini_client()
     errors: list[str] = []
-    thinking_level = _gemini_thinking_level()
-    max_output_tokens = _gemini_max_output_tokens()
+    config = types.GenerateContentConfig(
+        temperature=temperature,
+        max_output_tokens=_gemini_max_output_tokens(),
+        thinking_config=types.ThinkingConfig(thinking_level=_gemini_thinking_level()),
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+    )
 
     for model in _gemini_models():
         for attempt in range(2):
             try:
-                response = client.models.generate_content(
-                    model=model,
-                    contents=contents,
-                    config=types.GenerateContentConfig(
-                        temperature=temperature,
-                        max_output_tokens=max_output_tokens,
-                        thinking_config=types.ThinkingConfig(
-                            thinking_level=thinking_level
-                        ),
-                        automatic_function_calling=types.AutomaticFunctionCallingConfig(
-                            disable=True
-                        ),
-                    ),
-                )
+                response = client.models.generate_content(model=model, contents=contents, config=config)
                 text = (response.text or "").strip()
                 if not text:
                     raise RuntimeError(f"Gemini model {model} returned an empty response")
@@ -118,60 +88,24 @@ def _generate_gemini(contents: str, *, temperature: float) -> tuple[str, str]:
                 if not _gemini_retryable(exc):
                     raise
                 if attempt == 0:
-                    time.sleep(1.5)
+                    time.sleep(1.0)
 
-    raise RuntimeError(
-        "All configured Gemini models failed after transient-error retries. "
-        + " | ".join(errors)
-    )
+    raise RuntimeError("All configured Gemini models failed after retries. " + " | ".join(errors))
 
 
 def generate_text(messages: list[dict[str, str]], *, temperature: float = 0.0) -> str:
-    """Generate text through the configured provider.
-
-    Provider selection is controlled by WEATHER_LLM_PROVIDER=gemini|ollama.
-    Gemini is the repository default and uses GEMINI_API_KEY from the environment.
-    """
-    provider = provider_name()
-
-    if provider == "gemini":
-        contents: list[str] = []
-        for message in messages:
-            role = message.get("role", "user")
-            content = message.get("content", "")
-            prefix = (
-                "System instructions:\n"
-                if role == "system"
-                else "User:\n"
-                if role == "user"
-                else f"{role.title()}:\n"
-            )
-            contents.append(prefix + content)
-
-        try:
-            text, used_model = _generate_gemini(
-                "\n\n".join(contents), temperature=temperature
-            )
-        except Exception as exc:
-            raise RuntimeError(f"Gemini generation failed: {exc}") from exc
-
-        os.environ["GEMINI_LAST_MODEL"] = used_model
-        return text
-
-    if provider != "ollama":
-        raise ValueError(
-            f"Unsupported WEATHER_LLM_PROVIDER: {provider!r}. Use 'gemini' or 'ollama'."
-        )
-
-    import ollama
+    """Generate grounded text through Gemini only."""
+    contents: list[str] = []
+    for message in messages:
+        role = message.get("role", "user")
+        content = message.get("content", "")
+        prefix = "System instructions:\n" if role == "system" else "User:\n" if role == "user" else f"{role.title()}:\n"
+        contents.append(prefix + content)
 
     try:
-        response = ollama.chat(
-            model=model_name(),
-            messages=messages,
-            options={"temperature": temperature},
-        )
+        text, used_model = _generate_gemini("\n\n".join(contents), temperature=temperature)
     except Exception as exc:
-        raise RuntimeError(f"Ollama generation failed: {exc}") from exc
+        raise RuntimeError(f"Gemini generation failed: {exc}") from exc
 
-    return str(response["message"]["content"]).strip()
+    os.environ["GEMINI_LAST_MODEL"] = used_model
+    return text
