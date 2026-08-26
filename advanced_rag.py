@@ -70,11 +70,7 @@ def _confidence(values: list[float], value: float) -> float:
 
 
 def confidence_aware_rrf(result_sets: list[tuple[str, list[dict[str, Any]]]], top_k: int) -> list[dict[str, Any]]:
-    """Fuse dense/BM25 rankings using classic RRF plus score confidence.
-
-    This keeps rank-based robustness while giving a bounded bonus to documents
-    whose raw dense/BM25 score is strong relative to that channel's candidates.
-    """
+    """Fuse dense/BM25 rankings using classic RRF plus score confidence."""
     fused: dict[str, dict[str, Any]] = {}
     for channel, results in result_sets:
         score_key = "dense_score" if channel == "dense" else "bm25_score"
@@ -140,6 +136,24 @@ def compress_context(query: str, documents: list[dict[str, Any]], max_chars: int
     return "\n\n---\n\n".join(blocks), sources
 
 
+def _ensure_citations(answer_text: str, sources: list[dict[str, Any]]) -> str:
+    """Enforce a deterministic source-citation contract after LLM generation.
+
+    The model is instructed to cite claims, but local models can omit citations.
+    We never invent citation IDs: every emitted citation comes from the retrieved
+    source metadata. A compact source footer guarantees provenance is retained.
+    """
+    if not sources:
+        return answer_text.strip()
+    valid = [str(source.get("citation")) for source in sources if source.get("citation")]
+    existing = set(re.findall(r"\[(S\d+)\]", answer_text or ""))
+    missing = [citation for citation in valid if citation not in existing]
+    text = (answer_text or "").strip()
+    if missing:
+        text += "\n\nSources: " + ", ".join(f"[{citation}]" for citation in missing)
+    return text
+
+
 SYSTEM_PROMPT = """You are an Indian Weather Intelligence assistant.
 Use ONLY the supplied retrieved evidence. Never invent retrieved facts.
 Cite factual claims with [S1], [S2], etc. If the evidence does not support a
@@ -169,6 +183,7 @@ def answer(query: str, top_k: int = DEFAULT_TOP_K, location: str | None = None, 
         with span("generation", trace_id=trace_id, model=LLM_MODEL) as info:
             response = ollama.chat(model=LLM_MODEL, messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": f"Question:\n{query}\n\nRetrieved evidence:\n{context}"}], options={"temperature": 0})
             text = response["message"]["content"].strip(); info["answer_chars"] = len(text)
+        text = _ensure_citations(text, sources)
         latency_ms = round((time.perf_counter() - started) * 1000, 2); emit("rag.end", trace_id=trace_id, latency_ms=latency_ms, source_count=len(sources))
         return {"success": True, "query": query, "answer": text, "retrieval": {"backend": "local", "strategy": "multi-query + dense + BM25 + confidence-aware RRF + cross-encoder + compression", "corpus": len(store.rows), "filtered": len(allowed), "query_variants": len(variants), "fused_candidates": len(fused), "returned": len(ranked)}, "sources": sources, "trace_id": trace_id, "latency_ms": latency_ms}
     except Exception as exc:
