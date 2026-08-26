@@ -35,13 +35,7 @@ def _python_executable() -> str:
 
 @asynccontextmanager
 async def connect(trace_id: str | None = None) -> AsyncIterator[ClientSession]:
-    """Open an MCP stdio session using the project virtualenv.
-
-    The server working directory and interpreter are explicit because Chainlit
-    may be launched by a global Python installation. MCP stdout is reserved
-    for JSON-RPC; startup diagnostics are therefore routed to stderr by the
-    server.
-    """
+    """Open an MCP stdio session using the project virtualenv."""
     python = _python_executable()
     server_env = os.environ.copy()
     server_env["WEATHER_PYTHON"] = python
@@ -56,15 +50,15 @@ async def connect(trace_id: str | None = None) -> AsyncIterator[ClientSession]:
         cwd=PROJECT_ROOT,
     )
 
-    try:
-        async with stdio_client(server_params) as (read, write):
-            async with ClientSession(read, write) as session:
+    async with stdio_client(server_params) as (read, write):
+        async with ClientSession(read, write) as session:
+            try:
                 await session.initialize()
-                yield session
-    except Exception as exc:
-        raise RuntimeError(
-            f"MCP server failed to initialize using {python}: {exc}"
-        ) from exc
+            except Exception as exc:
+                raise RuntimeError(
+                    f"MCP server failed to initialize using {python}: {exc}"
+                ) from exc
+            yield session
 
 
 def _tool_schema(tool: Any) -> dict[str, Any]:
@@ -101,13 +95,24 @@ async def call_tool(
     name: str,
     arguments: dict[str, Any] | None = None,
 ) -> Any:
-    """Call an MCP tool through the live protocol session."""
+    """Call an MCP tool with compatibility across MCP SDK field aliases."""
     result = await session.call_tool(name, arguments=arguments or {})
-    if result.structured_content is not None:
-        return result.structured_content
+
+    # MCP SDK/Pydantic versions differ between snake_case and JSON aliases.
+    structured = getattr(result, "structured_content", None)
+    if structured is None:
+        structured = getattr(result, "structuredContent", None)
+    if structured is not None:
+        return structured
+
+    content = getattr(result, "content", None) or []
+    is_error = getattr(result, "is_error", None)
+    if is_error is None:
+        is_error = getattr(result, "isError", False)
+
     return {
-        "content": [getattr(content, "text", str(content)) for content in result.content],
-        "is_error": bool(getattr(result, "is_error", False)),
+        "content": [getattr(item, "text", str(item)) for item in content],
+        "is_error": bool(is_error),
     }
 
 
