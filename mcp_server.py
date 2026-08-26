@@ -6,6 +6,7 @@ engine. Agent orchestration remains outside the server boundary.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from mcp.server import MCPServer
@@ -17,9 +18,52 @@ import weather_client
 mcp = MCPServer("indian-weather-intelligence")
 
 
+def _current_time_of_day(current_time: str | None, daily: dict[str, Any]) -> str:
+    """Classify the current local time using the live forecast sunrise/sunset."""
+    if not current_time:
+        return "unknown"
+    try:
+        current_date = current_time[:10]
+        current = datetime.fromisoformat(current_time)
+        dates = daily.get("time") or []
+        index = dates.index(current_date) if current_date in dates else 0
+        sunrise_values = daily.get("sunrise") or []
+        sunset_values = daily.get("sunset") or []
+        sunrise = datetime.fromisoformat(sunrise_values[index]) if index < len(sunrise_values) else None
+        sunset = datetime.fromisoformat(sunset_values[index]) if index < len(sunset_values) else None
+        if sunrise and sunset:
+            return "day" if sunrise <= current <= sunset else "night"
+    except (ValueError, IndexError, TypeError):
+        pass
+    return "unknown"
+
+
+def _current_summary(current: dict[str, Any], daily: dict[str, Any], timezone: str | None) -> dict[str, Any]:
+    """Create an authoritative, compact current-condition payload for agents."""
+    code = current.get("weather_code")
+    return {
+        "observation_time": current.get("time"),
+        "timezone": timezone,
+        "time_of_day": _current_time_of_day(current.get("time"), daily),
+        "condition": weather_client.weather_description(code),
+        "weather_code": code,
+        "temperature_c": current.get("temperature_2m"),
+        "apparent_temperature_c": current.get("apparent_temperature"),
+        "relative_humidity_pct": current.get("relative_humidity_2m"),
+        "cloud_cover_pct": current.get("cloud_cover"),
+        "precipitation_mm": current.get("precipitation"),
+        "wind_speed_kmh": current.get("wind_speed_10m"),
+        "wind_direction_deg": current.get("wind_direction_10m"),
+    }
+
+
 @mcp.tool()
 def get_weather(location: str) -> dict[str, Any]:
-    """Get current weather and a 7-day forecast for an Indian location."""
+    """Get current weather and a 7-day forecast for an Indian location.
+
+    `current_summary` is authoritative for current conditions. Forecast values
+    in `daily` must never be substituted for current observations.
+    """
     location = location.strip() if location else ""
     if not location:
         raise ValueError("location cannot be empty")
@@ -27,7 +71,16 @@ def get_weather(location: str) -> dict[str, Any]:
     if not details:
         return {"success": False, "error": f"Could not resolve location: {location}"}
     weather = weather_client.fetch_weather(details["latitude"], details["longitude"])
-    return {"success": True, "location": details, "current": weather.get("current", {}), "daily": weather.get("daily", {})}
+    current = weather.get("current", {})
+    daily = weather.get("daily", {})
+    return {
+        "success": True,
+        "location": details,
+        "timezone": weather.get("timezone"),
+        "current": current,
+        "current_summary": _current_summary(current, daily, weather.get("timezone")),
+        "daily": daily,
+    }
 
 
 @mcp.tool()
