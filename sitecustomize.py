@@ -7,17 +7,29 @@ import inspect
 try:
     from google.genai import types
 
-    _factory = types.Part.from_function_response
-    _params = inspect.signature(_factory).parameters
+    descriptor = types.Part.__dict__.get("from_function_response")
+    factory = types.Part.from_function_response
 
-    if "id" not in _params:
-        def _compatible_from_function_response(*, name: str, response: dict, id: str | None = None, parts=None):
-            # The installed SDK helper does not accept `id`. Use its supported
-            # constructor shape rather than passing the unsupported keyword.
-            return _factory(name=name, response=response, parts=parts)
+    if "id" not in inspect.signature(factory).parameters:
+        if isinstance(descriptor, classmethod):
+            original = descriptor.__func__
 
-        # Keep the descriptor shape expected by Part's classmethod API.
-        types.Part.from_function_response = classmethod(_compatible_from_function_response)
+            def _compatible_from_function_response(cls, **kwargs):
+                # Some installed google-genai versions expose FunctionResponse.id
+                # but do not expose id on Part.from_function_response(). Preserve
+                # every supported argument and drop only the unsupported keyword.
+                kwargs.pop("id", None)
+                return original(cls, **kwargs)
+
+            types.Part.from_function_response = classmethod(_compatible_from_function_response)
+        else:
+            original = factory
+
+            def _compatible_from_function_response(**kwargs):
+                kwargs.pop("id", None)
+                return original(**kwargs)
+
+            types.Part.from_function_response = staticmethod(_compatible_from_function_response)
 except Exception:
     # Never prevent application startup because of an optional SDK shim.
     pass
