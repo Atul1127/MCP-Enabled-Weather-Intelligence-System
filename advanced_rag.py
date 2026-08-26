@@ -2,7 +2,7 @@
 
 Pipeline:
 query analysis -> optional multi-query expansion -> metadata filtering -> dense + BM25
--> confidence-aware RRF -> cross-encoder reranking -> context compression
+-> confidence-aware RRF -> adaptive cross-encoder reranking -> context compression
 -> grounded Ollama answer.
 """
 from __future__ import annotations
@@ -26,7 +26,8 @@ CONFIDENCE_WEIGHT = float(os.environ.get("WEATHER_RRF_CONFIDENCE_WEIGHT", "0.5")
 DEFAULT_TOP_K = int(os.environ.get("WEATHER_RAG_TOP_K", "5"))
 DENSE_CANDIDATES = int(os.environ.get("WEATHER_VECTOR_CANDIDATES", "30"))
 BM25_CANDIDATES = int(os.environ.get("WEATHER_BM25_CANDIDATES", "30"))
-RERANK_CANDIDATES = int(os.environ.get("WEATHER_RERANK_CANDIDATES", "10"))
+RERANK_CANDIDATES = int(os.environ.get("WEATHER_RERANK_CANDIDATES", "5"))
+RERANK_MIN_CANDIDATES = int(os.environ.get("WEATHER_RERANK_MIN_CANDIDATES", "2"))
 MAX_CONTEXT_CHARS = int(os.environ.get("WEATHER_RAG_MAX_CONTEXT_CHARS", "9000"))
 
 _reranker: CrossEncoder | None = None
@@ -118,8 +119,10 @@ def rrf_merge(result_sets: list[list[dict[str, Any]]], top_k: int) -> list[dict[
 
 def rerank(query: str, candidates: list[dict[str, Any]], top_k: int) -> list[dict[str, Any]]:
     if not candidates: return []
+    if len(candidates) < RERANK_MIN_CANDIDATES:
+        return [{**row, "reranker_score": None} for row in candidates[:top_k]]
     pairs = [(query, str(row.get("text") or row.get("narrative_text") or "")) for row in candidates]
-    scores = reranker().predict(pairs)
+    scores = reranker().predict(pairs, batch_size=min(8, len(pairs)), show_progress_bar=False)
     ranked = sorted(zip(candidates, scores), key=lambda x: float(x[1]), reverse=True)
     return [{**row, "reranker_score": float(score)} for row, score in ranked[:top_k]]
 
@@ -173,7 +176,7 @@ def answer(query: str, top_k: int = DEFAULT_TOP_K, location: str | None = None, 
             fused = confidence_aware_rrf(typed_sets, RERANK_CANDIDATES)
             info.update(backend="local", corpus=len(store.rows), filtered=len(allowed), query_variants=len(variants), dense_candidates=sum(len(x) for x in dense_sets), bm25_candidates=sum(len(x) for x in sparse_sets), fused_candidates=len(fused), fusion="confidence-aware-rrf")
         with span("reranking", trace_id=trace_id) as info:
-            ranked = rerank(query, fused, top_k); info["candidates"] = len(fused); info["returned"] = len(ranked)
+            ranked = rerank(query, fused, min(top_k, len(fused))); info["candidates"] = len(fused); info["returned"] = len(ranked); info["model"] = RERANKER_MODEL if len(fused) >= RERANK_MIN_CANDIDATES else "skipped-small-candidate-set"
         with span("context_compression", trace_id=trace_id) as info:
             context, sources = compress_context(query, ranked); info["sources"] = len(sources); info["context_chars"] = len(context)
         if not context:
@@ -182,6 +185,6 @@ def answer(query: str, top_k: int = DEFAULT_TOP_K, location: str | None = None, 
             response = ollama.chat(model=LLM_MODEL, messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": f"Question:\n{query}\n\nRetrieved evidence:\n{context}"}], options={"temperature": 0})
             text = response["message"]["content"].strip(); info["answer_chars"] = len(text)
         text = _ensure_citations(text, sources); latency_ms = round((time.perf_counter() - started) * 1000, 2); emit("rag.end", trace_id=trace_id, latency_ms=latency_ms, source_count=len(sources))
-        return {"success": True, "query": query, "answer": text, "retrieval": {"backend": "local", "strategy": "optional multi-query + dense + BM25 + confidence-aware RRF + cross-encoder + compression", "corpus": len(store.rows), "filtered": len(allowed), "query_variants": len(variants), "fused_candidates": len(fused), "returned": len(ranked)}, "sources": sources, "trace_id": trace_id, "latency_ms": latency_ms}
+        return {"success": True, "query": query, "answer": text, "retrieval": {"backend": "local", "strategy": "optional multi-query + dense + BM25 + confidence-aware RRF + adaptive cross-encoder + compression", "corpus": len(store.rows), "filtered": len(allowed), "query_variants": len(variants), "fused_candidates": len(fused), "returned": len(ranked)}, "sources": sources, "trace_id": trace_id, "latency_ms": latency_ms}
     except Exception as exc:
         emit("rag.error", trace_id=trace_id, error=str(exc)); return {"success": False, "query": query, "error": str(exc), "trace_id": trace_id}
