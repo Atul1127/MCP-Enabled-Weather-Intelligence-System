@@ -130,18 +130,24 @@ async def run_agent(query: str) -> dict[str, Any]:
 
         if _is_direct_rag_query(query):
             with span("agent.route", trace_id=state.trace_id, route="direct_rag") as info:
+                tool_arguments = {"query": query}
                 with span("tool.search_weather", trace_id=state.trace_id, tool="search_weather") as tool_info:
-                    result = await call_tool(session, "search_weather", {"query": query})
-                    tool_info["success"] = bool(result.get("success", True)) if isinstance(result, dict) else True
-                state.tool_calls.append({"name": "search_weather", "arguments": {"query": query}})
+                    result = await call_tool(session, "search_weather", tool_arguments)
+                    tool_success = bool(result.get("success", True)) if isinstance(result, dict) else True
+                    tool_info["success"] = tool_success
+                # Record the tool invocation as an explicit observability event for
+                # direct routes too. This keeps direct-RAG and ReAct traces consistent.
+                state.tool_calls.append({"name": "search_weather", "arguments": tool_arguments})
                 state.observations.append({"tool": "search_weather", "result": result})
-                info["tool"] = "search_weather"; info["success"] = bool(result.get("success", True)) if isinstance(result, dict) else True
+                emit("agent.tool", trace_id=state.trace_id, tool="search_weather", arguments=tool_arguments, success=tool_success, route="direct_rag")
+                info["tool"] = "search_weather"; info["success"] = tool_success; info["tool_calls"] = 1
             if not isinstance(result, dict) or not result.get("success"):
                 answer = "I could not produce a grounded answer because the weather knowledge retrieval service failed. Please retry after the retrieval service is available."
+                emit("agent.end", trace_id=state.trace_id, rounds=1, tools=1, route="direct_rag", success=False, latency_ms=round((time.perf_counter() - started) * 1000, 2))
                 return {"success": False, "answer": answer, "trace_id": state.trace_id, "rounds": 1, "tool_calls": state.tool_calls, "observations": state.observations}
             answer = str(result.get("answer") or "The weather knowledge retrieval tool returned no grounded answer.")
             answer = _append_rag_sources(answer.strip(), state.observations)
-            emit("agent.end", trace_id=state.trace_id, rounds=1, tools=1, route="direct_rag", latency_ms=round((time.perf_counter() - started) * 1000, 2))
+            emit("agent.end", trace_id=state.trace_id, rounds=1, tools=1, route="direct_rag", success=True, latency_ms=round((time.perf_counter() - started) * 1000, 2))
             return {"success": True, "answer": answer, "trace_id": state.trace_id, "rounds": 1, "tool_calls": state.tool_calls, "observations": state.observations, "sources": _rag_sources(state.observations), "route": "direct_rag"}
 
         for round_no in range(1, MAX_ROUNDS + 1):
