@@ -33,12 +33,21 @@ def main() -> None:
 
     span_events = [e for e in events if e.get("event") == "span.end"]
     tool_events = [e for e in events if e.get("event") == "agent.tool"]
+    # Direct routes record agent.tool events. For older traces that lack those
+    # events, fall back to tool.<name> spans without double-counting.
+    if tool_events:
+        tool_names = [e.get("tool") for e in tool_events]
+    else:
+        tool_spans = [e for e in span_events if str(e.get("span", "")).startswith("tool.")]
+        tool_names = [str(e.get("span"))[5:] for e in tool_spans]
+        tool_events = tool_spans
+
     print("WEATHER MCP TRACE")
     print("=" * 72)
     print(f"Trace ID       : {args.trace_id}")
     print(f"Events         : {len(events)}")
     print(f"Tool calls     : {len(tool_events)}")
-    print(f"Tools          : {[e.get('tool') for e in tool_events]}")
+    print(f"Tools          : {tool_names}")
     print("\nSPANS")
     print("-" * 72)
     for event in span_events:
