@@ -14,6 +14,28 @@ from agent import MODEL
 from llm_provider import provider_name
 
 
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+
+
+def _project_python() -> str:
+    """Use the project virtualenv even when Chainlit itself is global."""
+    configured = os.environ.get("WEATHER_PYTHON")
+    if configured and os.path.isfile(configured):
+        return configured
+
+    current = os.path.abspath(sys.executable)
+    if os.path.normcase(os.path.dirname(current)).endswith(
+        os.path.normcase(os.path.join(".venv", "Scripts"))
+    ):
+        return current
+
+    venv_python = os.path.join(PROJECT_ROOT, ".venv", "Scripts", "python.exe")
+    if os.path.isfile(venv_python):
+        return venv_python
+
+    return current
+
+
 @cl.on_chat_start
 async def on_chat_start() -> None:
     await cl.Message(
@@ -27,22 +49,21 @@ async def on_chat_start() -> None:
 
 
 def _run_agent_process(query: str) -> tuple[str, str | None]:
-    """Run the proven CLI agent in a completely isolated process.
+    """Run the proven CLI agent in an isolated project-venv process."""
+    agent_path = os.path.join(PROJECT_ROOT, "agent.py")
+    python = _project_python()
+    env = os.environ.copy()
+    env["WEATHER_PYTHON"] = python
 
-    Chainlit and the MCP stdio transport both use AnyIO task groups. Keeping
-    the MCP lifecycle inside a child process avoids sharing Chainlit's async
-    cancellation/task-group scope with the MCP subprocess transport.
-    """
-    agent_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agent.py")
     completed = subprocess.run(
-        [sys.executable, agent_path, query],
-        cwd=os.path.dirname(agent_path),
+        [python, agent_path, query],
+        cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
         timeout=int(os.environ.get("CHAINLIT_AGENT_TIMEOUT", "120")),
-        env=os.environ.copy(),
+        env=env,
     )
 
     stdout = (completed.stdout or "").strip()
@@ -54,11 +75,7 @@ def _run_agent_process(query: str) -> tuple[str, str | None]:
 
     trace_match = re.search(r"trace_id=([A-Za-z0-9_-]+)", stdout)
     trace_id = trace_match.group(1) if trace_match else None
-
-    if trace_match:
-        answer = stdout[: trace_match.start()].rstrip()
-    else:
-        answer = stdout
+    answer = stdout[: trace_match.start()].rstrip() if trace_match else stdout
 
     if not answer:
         raise RuntimeError("Agent returned an empty answer")
