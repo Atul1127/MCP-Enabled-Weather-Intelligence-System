@@ -83,12 +83,25 @@ def compress_context(query:str,documents:list[dict[str,Any]],max_chars:int=MAX_C
         blocks.append(block); used+=len(block); sources.append({"citation":f"S{i}","id":row.get("id"),"title":row.get("title"),"source":row.get("source"),"topic":row.get("topic"),"rrf_score":row.get("rrf_score"),"fusion_score":row.get("fusion_score"),"retrieval_confidence":row.get("retrieval_confidence"),"reranker_score":row.get("reranker_score")})
     return "\n\n---\n\n".join(blocks),sources
 
-def _ensure_citations(answer_text:str,sources:list[dict[str,Any]])->str:
-    if not sources:return answer_text.strip()
-    valid=[str(s.get("citation")) for s in sources if s.get("citation")]; existing=set(re.findall(r"\[(S\d+)\]",answer_text or "")); missing=[c for c in valid if c not in existing]; text=(answer_text or "").strip()
-    return text+("\n\nSources: "+", ".join(f"[{c}]" for c in missing) if missing else "")
+def _ensure_citations(answer_text:str,sources:list[dict[str,Any]])->tuple[str,list[dict[str,Any]]]:
+    """Keep the displayed source list aligned with citations actually used."""
+    text=(answer_text or "").strip()
+    if not sources:
+        return text, []
+    valid={str(s.get("citation")):s for s in sources if s.get("citation")}
+    cited_order=[]
+    for citation in re.findall(r"\[(S\d+)\]", text):
+        if citation in valid and citation not in cited_order:
+            cited_order.append(citation)
+    if not cited_order:
+        cited_order=[next(iter(valid))]
+        text=f"{text} [{cited_order[0]}]" if text else f"[{cited_order[0]}]"
+    cited_sources=[valid[c] for c in cited_order]
+    source_lines="\n\nSources:\n"+"\n".join(f"- [{c}] {valid[c].get('source') or valid[c].get('title') or 'Weather knowledge source'}" for c in cited_order)
+    text=re.sub(r"\n\nSources:\s*(?:\n- \[S\d+\].*)+$","",text,flags=re.I)
+    return text+source_lines,cited_sources
 
-SYSTEM_PROMPT="""You are an Indian Weather Intelligence assistant. Use ONLY the supplied retrieved evidence. Never invent retrieved facts. Cite factual claims with [S1], [S2], etc. If the evidence does not support a claim, say that it is not established by the retrieved sources. Distinguish reference guidance from live observations, forecasts, and official warnings. Keep the answer concise and useful."""
+SYSTEM_PROMPT="""You are an Indian Weather Intelligence assistant. Use ONLY the supplied retrieved evidence. Never invent retrieved facts. Cite factual claims with [S1], [S2], etc. If the evidence does not support a claim, say that it is not established by the retrieved sources. Distinguish reference guidance from live observations, forecasts, and official warnings. Answer every part of a multi-part question; if a requested recommendation is not supported by the retrieved evidence, explicitly say what additional live weather information is needed. Keep the answer concise and useful."""
 
 def answer(query:str,top_k:int=DEFAULT_TOP_K,location:str|None=None,state:str|None=None)->dict[str,Any]:
     trace_id=os.environ.get("WEATHER_TRACE_ID") or new_trace_id(); started=time.perf_counter()
@@ -112,7 +125,7 @@ def answer(query:str,top_k:int=DEFAULT_TOP_K,location:str|None=None,state:str|No
         with span("generation",trace_id=trace_id,provider=provider_name(),model=model_name()) as info:
             text=generate_text(messages,temperature=0); info["answer_chars"]=len(text)
         with span("citation_processing",trace_id=trace_id) as info:
-            text=_ensure_citations(text,sources); info["answer_chars"]=len(text); info["sources"]=len(sources)
+            text,sources=_ensure_citations(text,sources); info["answer_chars"]=len(text); info["sources"]=len(sources)
         latency_ms=round((time.perf_counter()-started)*1000,2); emit("rag.end",trace_id=trace_id,latency_ms=latency_ms,source_count=len(sources),provider=provider_name(),model=model_name(),retrieval_mode="simple" if simple_query else "complex")
         return {"success":True,"query":query,"answer":text,"retrieval":{"backend":"local","strategy":"optional multi-query + dense + BM25 + confidence-aware RRF + adaptive cross-encoder + compression","mode":"simple" if simple_query else "complex","corpus":len(store.rows),"filtered":len(allowed),"query_variants":len(variants),"fused_candidates":len(fused),"returned":len(ranked)},"sources":sources,"trace_id":trace_id,"latency_ms":latency_ms,"llm_provider":provider_name(),"llm_model":model_name()}
     except Exception as exc:emit("rag.error",trace_id=trace_id,error=str(exc));return {"success":False,"query":query,"error":str(exc),"trace_id":trace_id}
