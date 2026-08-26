@@ -2,11 +2,8 @@
 
 Pipeline:
 query analysis -> multi-query expansion -> metadata filtering -> dense + BM25
--> RRF -> cross-encoder reranking -> context compression -> grounded Ollama answer.
-
-The default backend is file-backed and requires no PostgreSQL, Lakebase, API key,
-or paid service. A production database adapter can be selected explicitly with
-WEATHER_RAG_BACKEND=postgres after the local pipeline is validated.
+-> confidence-aware RRF -> cross-encoder reranking -> context compression
+-> grounded Ollama answer.
 """
 from __future__ import annotations
 
@@ -25,6 +22,7 @@ from observability import emit, new_trace_id, span
 LLM_MODEL = os.environ.get("WEATHER_LLM_MODEL", "llama3.2:3b")
 RERANKER_MODEL = os.environ.get("WEATHER_RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
 RRF_K = int(os.environ.get("WEATHER_RRF_K", "60"))
+CONFIDENCE_WEIGHT = float(os.environ.get("WEATHER_RRF_CONFIDENCE_WEIGHT", "0.5"))
 DEFAULT_TOP_K = int(os.environ.get("WEATHER_RAG_TOP_K", "5"))
 DENSE_CANDIDATES = int(os.environ.get("WEATHER_VECTOR_CANDIDATES", "30"))
 BM25_CANDIDATES = int(os.environ.get("WEATHER_BM25_CANDIDATES", "30"))
@@ -50,11 +48,7 @@ def expand_query(query: str, trace_id: str) -> list[str]:
     )
     try:
         with span("query_expansion", trace_id=trace_id) as info:
-            response = ollama.chat(
-                model=LLM_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                options={"temperature": 0},
-            )
+            response = ollama.chat(model=LLM_MODEL, messages=[{"role": "user", "content": prompt}], options={"temperature": 0})
             raw = response["message"]["content"].strip()
             data = json.loads(raw)
             variants = [str(x).strip() for x in data.get("queries", []) if str(x).strip()]
@@ -65,17 +59,50 @@ def expand_query(query: str, trace_id: str) -> list[str]:
         return [query]
 
 
-def rrf_merge(result_sets: list[list[dict[str, Any]]], top_k: int) -> list[dict[str, Any]]:
+def _confidence(values: list[float], value: float) -> float:
+    """Normalize a retrieval-channel score to a relative 0..1 confidence."""
+    if not values:
+        return 0.0
+    lo, hi = min(values), max(values)
+    if hi <= lo:
+        return 1.0 if value > 0 else 0.0
+    return max(0.0, min(1.0, (value - lo) / (hi - lo)))
+
+
+def confidence_aware_rrf(result_sets: list[tuple[str, list[dict[str, Any]]]], top_k: int) -> list[dict[str, Any]]:
+    """Fuse dense/BM25 rankings using classic RRF plus score confidence.
+
+    This keeps rank-based robustness while giving a bounded bonus to documents
+    whose raw dense/BM25 score is strong relative to that channel's candidates.
+    """
     fused: dict[str, dict[str, Any]] = {}
-    for results in result_sets:
+    for channel, results in result_sets:
+        score_key = "dense_score" if channel == "dense" else "bm25_score"
+        values = [float(row.get(score_key, 0.0)) for row in results]
         for rank, row in enumerate(results, 1):
             key = str(row.get("id"))
             if not key or key == "None":
                 continue
-            item = fused.setdefault(key, {**row, "rrf_score": 0.0, "retrieval_ranks": []})
+            raw_score = float(row.get(score_key, 0.0))
+            confidence = _confidence(values, raw_score)
+            item = fused.setdefault(
+                key,
+                {**row, "rrf_score": 0.0, "confidence_score": 0.0, "retrieval_ranks": [], "retrieval_channels": []},
+            )
             item["rrf_score"] += 1.0 / (RRF_K + rank)
+            item["confidence_score"] += CONFIDENCE_WEIGHT * confidence / (RRF_K + rank)
             item["retrieval_ranks"].append(rank)
-    return sorted(fused.values(), key=lambda x: x["rrf_score"], reverse=True)[:top_k]
+            item["retrieval_channels"].append(channel)
+            item["retrieval_confidence"] = max(float(item.get("retrieval_confidence", 0.0)), confidence)
+    for item in fused.values():
+        item["fusion_score"] = item["rrf_score"] + item["confidence_score"]
+    return sorted(fused.values(), key=lambda x: x["fusion_score"], reverse=True)[:top_k]
+
+
+def rrf_merge(result_sets: list[list[dict[str, Any]]], top_k: int) -> list[dict[str, Any]]:
+    """Backward-compatible wrapper for alternating dense/BM25 result sets."""
+    typed = [("dense" if i % 2 == 0 else "bm25", results) for i, results in enumerate(result_sets)]
+    return confidence_aware_rrf(typed, top_k)
 
 
 def rerank(query: str, candidates: list[dict[str, Any]], top_k: int) -> list[dict[str, Any]]:
@@ -92,7 +119,6 @@ def _query_terms(query: str) -> set[str]:
 
 
 def compress_context(query: str, documents: list[dict[str, Any]], max_chars: int = MAX_CONTEXT_CHARS) -> tuple[str, list[dict[str, Any]]]:
-    """Compress retrieved documents by retaining the most query-relevant sentences."""
     terms = _query_terms(query)
     blocks: list[str] = []
     sources: list[dict[str, Any]] = []
@@ -100,16 +126,9 @@ def compress_context(query: str, documents: list[dict[str, Any]], max_chars: int
     for i, row in enumerate(documents, 1):
         text = str(row.get("text") or row.get("narrative_text") or "").strip()
         sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
-        ranked_sentences = sorted(
-            sentences,
-            key=lambda s: sum(1 for token in _query_terms(s) if token in terms),
-            reverse=True,
-        )
+        ranked_sentences = sorted(sentences, key=lambda s: sum(1 for token in _query_terms(s) if token in terms), reverse=True)
         selected = " ".join(ranked_sentences[:4]) or text
-        block = (
-            f"[S{i}] Topic={row.get('topic')}; Source={row.get('source')}; "
-            f"Location={row.get('location') or 'general'}\n{selected}"
-        )
+        block = f"[S{i}] Topic={row.get('topic')}; Source={row.get('source')}; Location={row.get('location') or 'general'}\n{selected}"
         if used + len(block) > max_chars:
             remaining = max_chars - used
             if remaining < 250:
@@ -117,15 +136,7 @@ def compress_context(query: str, documents: list[dict[str, Any]], max_chars: int
             block = block[:remaining]
         blocks.append(block)
         used += len(block)
-        sources.append({
-            "citation": f"S{i}",
-            "id": row.get("id"),
-            "title": row.get("title"),
-            "source": row.get("source"),
-            "topic": row.get("topic"),
-            "rrf_score": row.get("rrf_score"),
-            "reranker_score": row.get("reranker_score"),
-        })
+        sources.append({"citation": f"S{i}", "id": row.get("id"), "title": row.get("title"), "source": row.get("source"), "topic": row.get("topic"), "rrf_score": row.get("rrf_score"), "fusion_score": row.get("fusion_score"), "retrieval_confidence": row.get("retrieval_confidence"), "reranker_score": row.get("reranker_score")})
     return "\n\n---\n\n".join(blocks), sources
 
 
@@ -137,79 +148,28 @@ reference guidance from live observations, forecasts, and official warnings.
 Keep the answer concise and useful."""
 
 
-def answer(
-    query: str,
-    top_k: int = DEFAULT_TOP_K,
-    location: str | None = None,
-    state: str | None = None,
-) -> dict[str, Any]:
-    trace_id = new_trace_id()
-    started = time.perf_counter()
+def answer(query: str, top_k: int = DEFAULT_TOP_K, location: str | None = None, state: str | None = None) -> dict[str, Any]:
+    trace_id = new_trace_id(); started = time.perf_counter()
     if not query or not query.strip():
         raise ValueError("Query cannot be empty")
-    query = query.strip()
-    emit("rag.start", trace_id=trace_id, query=query, top_k=top_k, backend="local")
+    query = query.strip(); emit("rag.start", trace_id=trace_id, query=query, top_k=top_k, backend="local")
     try:
-        store = get_store()
-        allowed = store.filtered_rows(location=location, state=state)
+        store = get_store(); allowed = store.filtered_rows(location=location, state=state)
         variants = expand_query(query, trace_id)
         with span("retrieval", trace_id=trace_id) as info:
             dense_sets = [store.dense_search(q, DENSE_CANDIDATES, allowed) for q in variants]
             sparse_sets = [store.bm25_search(q, BM25_CANDIDATES, allowed) for q in variants]
-            fused = rrf_merge(dense_sets + sparse_sets, RERANK_CANDIDATES)
-            info.update(
-                backend="local",
-                corpus=len(store.rows),
-                filtered=len(allowed),
-                query_variants=len(variants),
-                dense_candidates=sum(len(x) for x in dense_sets),
-                bm25_candidates=sum(len(x) for x in sparse_sets),
-                fused_candidates=len(fused),
-            )
-
-        ranked = rerank(query, fused, top_k)
-        context, sources = compress_context(query, ranked)
+            typed_sets = [("dense", rows) for rows in dense_sets] + [("bm25", rows) for rows in sparse_sets]
+            fused = confidence_aware_rrf(typed_sets, RERANK_CANDIDATES)
+            info.update(backend="local", corpus=len(store.rows), filtered=len(allowed), query_variants=len(variants), dense_candidates=sum(len(x) for x in dense_sets), bm25_candidates=sum(len(x) for x in sparse_sets), fused_candidates=len(fused), fusion="confidence-aware-rrf")
+        ranked = rerank(query, fused, top_k); context, sources = compress_context(query, ranked)
         if not context:
             emit("rag.no_evidence", trace_id=trace_id)
-            return {
-                "success": False,
-                "query": query,
-                "error": "No relevant evidence found in the local weather knowledge base.",
-                "trace_id": trace_id,
-                "retrieval": {"strategy": "multi-query + dense + BM25 + RRF + cross-encoder + compression"},
-            }
-
+            return {"success": False, "query": query, "error": "No relevant evidence found in the local weather knowledge base.", "trace_id": trace_id, "retrieval": {"strategy": "multi-query + dense + BM25 + confidence-aware RRF + cross-encoder + compression"}}
         with span("generation", trace_id=trace_id, model=LLM_MODEL) as info:
-            response = ollama.chat(
-                model=LLM_MODEL,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": f"Question:\n{query}\n\nRetrieved evidence:\n{context}"},
-                ],
-                options={"temperature": 0},
-            )
-            text = response["message"]["content"].strip()
-            info["answer_chars"] = len(text)
-
-        latency_ms = round((time.perf_counter() - started) * 1000, 2)
-        emit("rag.end", trace_id=trace_id, latency_ms=latency_ms, source_count=len(sources))
-        return {
-            "success": True,
-            "query": query,
-            "answer": text,
-            "retrieval": {
-                "backend": "local",
-                "strategy": "multi-query + dense + BM25 + RRF + cross-encoder + compression",
-                "corpus": len(store.rows),
-                "filtered": len(allowed),
-                "query_variants": len(variants),
-                "fused_candidates": len(fused),
-                "returned": len(ranked),
-            },
-            "sources": sources,
-            "trace_id": trace_id,
-            "latency_ms": latency_ms,
-        }
+            response = ollama.chat(model=LLM_MODEL, messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": f"Question:\n{query}\n\nRetrieved evidence:\n{context}"}], options={"temperature": 0})
+            text = response["message"]["content"].strip(); info["answer_chars"] = len(text)
+        latency_ms = round((time.perf_counter() - started) * 1000, 2); emit("rag.end", trace_id=trace_id, latency_ms=latency_ms, source_count=len(sources))
+        return {"success": True, "query": query, "answer": text, "retrieval": {"backend": "local", "strategy": "multi-query + dense + BM25 + confidence-aware RRF + cross-encoder + compression", "corpus": len(store.rows), "filtered": len(allowed), "query_variants": len(variants), "fused_candidates": len(fused), "returned": len(ranked)}, "sources": sources, "trace_id": trace_id, "latency_ms": latency_ms}
     except Exception as exc:
-        emit("rag.error", trace_id=trace_id, error=str(exc))
-        return {"success": False, "query": query, "error": str(exc), "trace_id": trace_id}
+        emit("rag.error", trace_id=trace_id, error=str(exc)); return {"success": False, "query": query, "error": str(exc), "trace_id": trace_id}
