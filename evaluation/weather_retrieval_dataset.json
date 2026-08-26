@@ -1,0 +1,20 @@
+{
+  "version": "1.0",
+  "description": "Fixed local weather retrieval benchmark adapted from the original Hybrid-RAG evaluation methodology, excluding knowledge-graph strategies.",
+  "cases": [
+    {"id":"rain_01","category":"semantic","question":"What atmospheric conditions can lead to heavy rainfall?","gold_source":"rainfall-001"},
+    {"id":"rain_02","category":"semantic","question":"What weather can cause intense short-duration rain and lightning?","gold_source":"rainfall-002"},
+    {"id":"rain_03","category":"entity","question":"What controls rainfall during the Indian monsoon?","gold_source":"rainfall-003"},
+    {"id":"rain_04","category":"semantic","question":"How does mountainous terrain increase rainfall?","gold_source":"rainfall-004"},
+    {"id":"rain_05","category":"semantic","question":"Why can low pressure produce widespread rain?","gold_source":"rainfall-005"},
+    {"id":"rain_06","category":"lexical","question":"What does precipitation probability actually mean?","gold_source":"rainfall-006"},
+    {"id":"rain_07","category":"semantic","question":"How is rainfall amount different from rain probability?","gold_source":"rainfall-007"},
+    {"id":"rain_08","category":"entity","question":"What weather factors should be considered before outdoor activities?","gold_source":"rainfall-008"},
+    {"id":"rain_09","category":"semantic","question":"Why can humid heat feel worse than the measured temperature?","gold_source":"rainfall-009"},
+    {"id":"rain_10","category":"lexical","question":"Which WMO weather code represents a thunderstorm?","gold_source":"rainfall-010"},
+    {"id":"rain_11","category":"semantic","question":"Should current weather observations be used to answer a future forecast question?","gold_source":"rainfall-011"},
+    {"id":"rain_12","category":"entity","question":"How is an application risk score different from an official warning?","gold_source":"rainfall-012"},
+    {"id":"rain_13","category":"semantic","question":"What determines whether heavy rain will cause flooding?","gold_source":"rainfall-013"},
+    {"id":"rain_14","category":"semantic","question":"Why does forecast uncertainty increase for some future weather claims?","gold_source":"rainfall-014"}
+  ]
+}
