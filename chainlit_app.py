@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import chainlit as cl
 
 from agent import MODEL, run_agent
@@ -20,6 +22,18 @@ async def on_chat_start() -> None:
     ).send()
 
 
+def _run_agent_isolated(query: str) -> dict:
+    """Run the MCP stdio agent on its own asyncio event loop.
+
+    Chainlit runs on an AnyIO task group. The MCP stdio transport also owns
+    an AnyIO task group, and sharing the Chainlit event-loop lifecycle can
+    surface the generic `TaskGroup` exception in the UI even though the same
+    agent works correctly from the CLI. Running the complete agent lifecycle
+    in a worker thread gives the MCP subprocess its own asyncio/AnyIO scope.
+    """
+    return asyncio.run(run_agent(query))
+
+
 @cl.on_message
 async def on_message(message: cl.Message) -> None:
     query = (message.content or "").strip()
@@ -28,7 +42,7 @@ async def on_message(message: cl.Message) -> None:
         return
 
     try:
-        result = await run_agent(query)
+        result = await asyncio.to_thread(_run_agent_isolated, query)
         answer = str(result.get("answer") or "No answer was returned.")
         trace_id = result.get("trace_id")
         if trace_id:
