@@ -2,27 +2,21 @@
 from __future__ import annotations
 from datetime import datetime
 from typing import Any
+import os
 from mcp.server import MCPServer
 import advanced_rag, lakebase, weather_client
+from observability import emit, span
 
 mcp = MCPServer("indian-weather-intelligence")
 
 
 def _warmup_rag() -> None:
-    """Preload local RAG models before serving requests.
-
-    The cross-encoder has a one-time model-load cost (~10s on the local
-    machine). Loading it during MCP startup keeps that cold-start cost out of
-    the first search_weather tool span and makes request latency representative
-    of the warm service path. Set WEATHER_RAG_PRELOAD=0 to disable this.
-    """
-    if __import__("os").environ.get("WEATHER_RAG_PRELOAD", "1").strip().lower() in {"0", "false", "no", "off"}:
+    """Preload local RAG models before serving requests."""
+    if os.environ.get("WEATHER_RAG_PRELOAD", "1").strip().lower() in {"0", "false", "no", "off"}:
         return
     try:
         advanced_rag.reranker()
     except Exception as exc:
-        # Do not prevent the MCP server from starting. The RAG path can still
-        # surface the model-loading error when reranking is actually requested.
         print(f"RAG model preload warning: {exc}")
 
 
@@ -34,6 +28,7 @@ def _target_date(value: str | None, daily: dict[str, Any]) -> str:
     if text=="tomorrow": return dates[1] if len(dates)>1 else dates[0]
     try: return datetime.strptime(text,"%Y-%m-%d").date().isoformat()
     except ValueError as exc: raise ValueError("date must be 'today', 'tomorrow', or YYYY-MM-DD") from exc
+
 
 def _daily_summary(weather: dict[str, Any], target: str) -> dict[str, Any]:
     daily=weather.get("daily",{}); dates=daily.get("time") or []
@@ -114,7 +109,16 @@ def assess_weather_risk(location: str, activity: str = "outdoor activity", date:
 @mcp.tool()
 def search_weather(query: str, top_k: int = 5, location: str | None = None, state: str | None = None) -> dict[str, Any]:
     """Search weather knowledge with hybrid RRF retrieval and reranking."""
-    return advanced_rag.answer(query.strip(),top_k=max(1,min(20,int(top_k))),location=location,state=state) if query and query.strip() else {"success":False,"error":"query cannot be empty"}
+    trace_id = os.environ.get("WEATHER_TRACE_ID")
+    with span("mcp.search_weather", trace_id=trace_id or "unknown", tool="search_weather") as info:
+        started = datetime.now().timestamp()
+        result = advanced_rag.answer(query.strip(),top_k=max(1,min(20,int(top_k))),location=location,state=state) if query and query.strip() else {"success":False,"error":"query cannot be empty"}
+        info["success"] = bool(result.get("success", False)) if isinstance(result, dict) else True
+        info["rag_latency_ms"] = result.get("latency_ms") if isinstance(result, dict) else None
+        info["result_chars"] = len(str(result.get("answer", ""))) if isinstance(result, dict) else len(str(result))
+        info["handler_overhead_ms"] = round((datetime.now().timestamp() - started) * 1000 - float(info.get("rag_latency_ms") or 0), 2)
+        emit("mcp.tool.result", trace_id=trace_id or "unknown", tool="search_weather", success=info["success"], rag_latency_ms=info["rag_latency_ms"], handler_overhead_ms=info["handler_overhead_ms"], result_chars=info["result_chars"])
+        return result
 
 @mcp.tool()
 def ask_weather(query: str, top_k: int = 5, location: str | None = None, state: str | None = None) -> dict[str, Any]:
