@@ -1,6 +1,6 @@
 """Benchmark Dense, BM25, RRF, confidence-aware RRF and reranking.
 
-Run:
+Run from the repository root:
     python evaluation/retrieval_benchmark.py
 
 The benchmark intentionally excludes the Knowledge Graph. It measures the
@@ -10,15 +10,23 @@ from __future__ import annotations
 
 import json
 import statistics
+import sys
 import time
 from pathlib import Path
 
-from advanced_rag import RRF_K, confidence_aware_rrf, rerank
+# When Python executes a file inside evaluation/, it places that directory on
+# sys.path rather than the repository root. Add the root explicitly so the
+# benchmark works both as `python evaluation/...` and from an IDE/test runner.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from advanced_rag import CONFIDENCE_WEIGHT, RRF_K, confidence_aware_rrf, rerank
 from local_rag_store import get_store
 
-ROOT = Path(__file__).resolve().parent
-DATASET = ROOT / "weather_retrieval_dataset.json"
-REPORT = ROOT / "retrieval_benchmark_report.json"
+EVALUATION_DIR = Path(__file__).resolve().parent
+DATASET = EVALUATION_DIR / "weather_retrieval_dataset.json"
+REPORT = EVALUATION_DIR / "retrieval_benchmark_report.json"
 
 
 def rank_gold(rows: list[dict], gold: str) -> int | None:
@@ -48,40 +56,39 @@ def main() -> None:
         q = case["question"]
         dense = None
         bm25 = None
-        fused = None
         confidence_fused = None
-        ranked = None
 
         for strategy in strategies:
             started = time.perf_counter()
             error = None
             try:
                 if strategy == "Dense":
-                    dense = store.dense_search(q, 5)
-                    result = dense
+                    result = store.dense_search(q, 5)
                 elif strategy == "BM25":
-                    bm25 = store.bm25_search(q, 5)
-                    result = bm25
+                    result = store.bm25_search(q, 5)
                 elif strategy == "RRF":
-                    dense_full = store.dense_search(q, 20)
-                    bm25_full = store.bm25_search(q, 20)
-                    fused = _standard_rrf([dense_full, bm25_full], 5)
-                    result = fused
+                    dense = store.dense_search(q, 20)
+                    bm25 = store.bm25_search(q, 20)
+                    result = _standard_rrf([dense, bm25], 5)
                 elif strategy == "ConfidenceRRF":
-                    dense_full = store.dense_search(q, 20)
-                    bm25_full = store.bm25_search(q, 20)
-                    confidence_fused = confidence_aware_rrf([("dense", dense_full), ("bm25", bm25_full)], 20)
+                    dense = store.dense_search(q, 20)
+                    bm25 = store.bm25_search(q, 20)
+                    confidence_fused = confidence_aware_rrf(
+                        [("dense", dense), ("bm25", bm25)], 20
+                    )
                     result = confidence_fused[:5]
                 else:
                     if confidence_fused is None:
-                        dense_full = store.dense_search(q, 20)
-                        bm25_full = store.bm25_search(q, 20)
-                        confidence_fused = confidence_aware_rrf([("dense", dense_full), ("bm25", bm25_full)], 20)
-                    ranked = rerank(q, confidence_fused, 5)
-                    result = ranked
+                        dense = store.dense_search(q, 20)
+                        bm25 = store.bm25_search(q, 20)
+                        confidence_fused = confidence_aware_rrf(
+                            [("dense", dense), ("bm25", bm25)], 20
+                        )
+                    result = rerank(q, confidence_fused, 5)
             except Exception as exc:
                 result = []
                 error = f"{type(exc).__name__}: {exc}"
+
             latency_ms = (time.perf_counter() - started) * 1000
             row = {
                 "id": case["id"],
@@ -115,7 +122,10 @@ def main() -> None:
     for category in sorted({c["category"] for c in cases}):
         category_metrics[category] = {}
         for strategy in strategies:
-            subset = [r for r in rows if r["strategy"] == strategy and r["category"] == category]
+            subset = [
+                r for r in rows
+                if r["strategy"] == strategy and r["category"] == category
+            ]
             category_metrics[category][strategy] = {
                 "Hit@1": round(statistics.mean(r["hit_at_1"] for r in subset), 4),
                 "Recall@5": round(statistics.mean(r["recall_at_5"] for r in subset), 4),
@@ -126,14 +136,25 @@ def main() -> None:
     for row in rows:
         if row["error"] or row["rank"] is None or row["rank"] > 1:
             failures.append({
-                "id": row["id"], "category": row["category"], "strategy": row["strategy"],
-                "question": row["question"], "failure_type": "runtime_error" if row["error"] else ("miss_at_5" if row["rank"] is None else "not_rank_1"),
-                "rank": row["rank"], "error": row["error"],
+                "id": row["id"],
+                "category": row["category"],
+                "strategy": row["strategy"],
+                "question": row["question"],
+                "failure_type": (
+                    "runtime_error" if row["error"]
+                    else ("miss_at_5" if row["rank"] is None else "not_rank_1")
+                ),
+                "rank": row["rank"],
+                "error": row["error"],
             })
 
     report = {
-        "dataset": {"path": DATASET.name, "cases": len(cases), "categories": sorted({c["category"] for c in cases})},
-        "rrf": {"k": RRF_K, "confidence_weight": __import__("advanced_rag").CONFIDENCE_WEIGHT},
+        "dataset": {
+            "path": DATASET.name,
+            "cases": len(cases),
+            "categories": sorted({c["category"] for c in cases}),
+        },
+        "rrf": {"k": RRF_K, "confidence_weight": CONFIDENCE_WEIGHT},
         "summary": summary,
         "category_metrics": category_metrics,
         "failure_analysis": failures,
@@ -149,12 +170,22 @@ def main() -> None:
     print("\n" + "=" * 88)
     print("WEATHER HYBRID RETRIEVAL BENCHMARK")
     print("=" * 88)
-    print(f"Dataset: {len(cases)} queries | Categories: {', '.join(report['dataset']['categories'])}")
-    print(f"{'Strategy':<18}{'Hit@1':>9}{'Recall@5':>11}{'MRR':>9}{'Mean ms':>11}{'P95 ms':>11}")
+    print(
+        f"Dataset: {len(cases)} queries | "
+        f"Categories: {', '.join(report['dataset']['categories'])}"
+    )
+    print(
+        f"{'Strategy':<18}{'Hit@1':>9}{'Recall@5':>11}"
+        f"{'MRR':>9}{'Mean ms':>11}{'P95 ms':>11}"
+    )
     print("-" * 88)
     for name in strategies:
         s = summary[name]
-        print(f"{name:<18}{s['Hit@1']:>9.3f}{s['Recall@5']:>11.3f}{s['MRR']:>9.3f}{s['latency_ms_mean']:>11.1f}{s['latency_ms_p95']:>11.1f}")
+        print(
+            f"{name:<18}{s['Hit@1']:>9.3f}{s['Recall@5']:>11.3f}"
+            f"{s['MRR']:>9.3f}{s['latency_ms_mean']:>11.1f}"
+            f"{s['latency_ms_p95']:>11.1f}"
+        )
     print(f"\nFailure analysis: {len(failures)} non-perfect outcomes")
     print(f"Report: {REPORT}")
 
@@ -168,7 +199,9 @@ def _standard_rrf(result_sets: list[list[dict]], top_k: int) -> list[dict]:
                 continue
             item = fused.setdefault(key, {**row, "rrf_score": 0.0})
             item["rrf_score"] += 1.0 / (RRF_K + rank)
-    return sorted(fused.values(), key=lambda x: x["rrf_score"], reverse=True)[:top_k]
+    return sorted(
+        fused.values(), key=lambda x: x["rrf_score"], reverse=True
+    )[:top_k]
 
 
 if __name__ == "__main__":
