@@ -5,44 +5,73 @@ import os
 from typing import Any
 
 
-PROVIDER = os.environ.get("WEATHER_LLM_PROVIDER", "ollama").strip().lower()
-OLLAMA_MODEL = os.environ.get("WEATHER_LLM_MODEL", "llama3.2:3b")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+def provider_name() -> str:
+    return os.environ.get("WEATHER_LLM_PROVIDER", "ollama").strip().lower()
+
+
+def model_name() -> str:
+    if provider_name() == "gemini":
+        return os.environ.get("GEMINI_MODEL", "gemini-3.7-flash")
+    return os.environ.get("WEATHER_LLM_MODEL", "llama3.2:3b")
 
 
 def _gemini_client():
     from google import genai
-    return genai.Client()
+
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY is not set in the process environment")
+    return genai.Client(api_key=api_key)
 
 
 def generate_text(messages: list[dict[str, str]], *, temperature: float = 0.0) -> str:
     """Generate text through the configured provider.
 
     Provider selection is controlled by WEATHER_LLM_PROVIDER=ollama|gemini.
-    Gemini reads GEMINI_API_KEY from the environment automatically.
+    Gemini uses GEMINI_API_KEY from the environment.
     """
-    if PROVIDER == "gemini":
-        contents = []
+    provider = provider_name()
+
+    if provider == "gemini":
+        contents: list[str] = []
         for message in messages:
             role = message.get("role", "user")
             content = message.get("content", "")
-            prefix = "System instructions:\n" if role == "system" else ("User:\n" if role == "user" else f"{role.title()}:\n")
+            prefix = (
+                "System instructions:\n"
+                if role == "system"
+                else "User:\n"
+                if role == "user"
+                else f"{role.title()}:\n"
+            )
             contents.append(prefix + content)
-        response = _gemini_client().models.generate_content(
-            model=GEMINI_MODEL,
-            contents="\n\n".join(contents),
-            config={"temperature": temperature},
-        )
-        return (response.text or "").strip()
+
+        try:
+            response = _gemini_client().models.generate_content(
+                model=model_name(),
+                contents="\n\n".join(contents),
+                config={"temperature": temperature},
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Gemini generation failed: {exc}") from exc
+
+        text = (response.text or "").strip()
+        if not text:
+            raise RuntimeError("Gemini returned an empty response")
+        return text
+
+    if provider != "ollama":
+        raise ValueError(f"Unsupported WEATHER_LLM_PROVIDER: {provider!r}. Use 'ollama' or 'gemini'.")
 
     import ollama
-    response = ollama.chat(model=OLLAMA_MODEL, messages=messages, options={"temperature": temperature})
+
+    try:
+        response = ollama.chat(
+            model=model_name(),
+            messages=messages,
+            options={"temperature": temperature},
+        )
+    except Exception as exc:
+        raise RuntimeError(f"Ollama generation failed: {exc}") from exc
+
     return str(response["message"]["content"]).strip()
-
-
-def provider_name() -> str:
-    return PROVIDER
-
-
-def model_name() -> str:
-    return GEMINI_MODEL if PROVIDER == "gemini" else OLLAMA_MODEL
