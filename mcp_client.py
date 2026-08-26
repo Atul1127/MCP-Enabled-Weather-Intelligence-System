@@ -35,7 +35,7 @@ async def connect(trace_id: str | None = None) -> AsyncIterator[ClientSession]:
 
 
 def _tool_schema(tool: Any) -> dict[str, Any]:
-    """Convert an MCP Tool definition into Ollama's function-tool schema."""
+    """Convert an MCP Tool definition into a provider-neutral function schema."""
     schema = getattr(tool, "input_schema", None)
     if schema is None:
         schema = getattr(tool, "inputSchema", None)
@@ -52,7 +52,7 @@ def _tool_schema(tool: Any) -> dict[str, Any]:
 
 
 async def discover_tools(session: ClientSession) -> list[dict[str, Any]]:
-    """Discover MCP tools and expose them as Ollama-compatible schemas."""
+    """Discover MCP tools and return normalized function schemas."""
     response = await session.list_tools()
     tools = getattr(response, "tools", None)
     if tools is None:
@@ -75,7 +75,7 @@ async def call_tool(session: ClientSession, name: str, arguments: dict[str, Any]
 
 
 async def main() -> None:
-    """Smoke-test MCP v2 discovery and one weather call."""
+    """Smoke-test MCP discovery and one weather call."""
     async with connect() as session:
         tools = await discover_tools(session)
         print("Available MCP tools:")
