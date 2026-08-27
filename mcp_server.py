@@ -15,15 +15,14 @@ except ImportError:
     except ImportError:
         from mcp.server.fastmcp import FastMCP as MCPServer
 
-from rag.pipeline import RAGPipeline
 from observability import emit, span
 
 mcp = MCPServer("indian-weather-intelligence")
-_rag = RAGPipeline()
 
 def _target_date(value: str | None, daily: dict[str, Any]) -> str:
     dates = daily.get("time") or []
-    if not dates: raise ValueError("Forecast contains no dates")
+    if not dates:
+        raise ValueError("Forecast contains no dates")
     text = (value or "tomorrow").strip().lower()
     if text == "today": return dates[0]
     if text == "tomorrow": return dates[1] if len(dates) > 1 else dates[0]
@@ -113,8 +112,11 @@ def search_weather(query: str, top_k: int = 5, location: str | None = None, stat
     """Search weather knowledge through the modular RAG pipeline."""
     query = query.strip() if query else ""
     if not query: return {"success": False, "error": "query cannot be empty"}
+    # Keep RAG's native ML dependencies out of MCP startup/tool discovery.
+    # They are imported only when a RAG search is actually requested.
+    from rag.pipeline import RAGPipeline
     with span("mcp.search_weather", trace_id="unknown", tool="search_weather") as info:
-        result = _rag.retrieve(query, location=location, state=state, top_k=top_k); payload = {"success": True, "query": query, "intent": result.plan.intent, "documents": result.documents, "context": result.context, "sources": result.sources}; info["success"] = True; info["documents"] = len(result.documents); info["sources"] = len(result.sources); emit("mcp.tool.result", trace_id="unknown", tool="search_weather", success=True, documents=len(result.documents), sources=len(result.sources)); return payload
+        result = RAGPipeline().retrieve(query, location=location, state=state, top_k=top_k); payload = {"success": True, "query": query, "intent": result.plan.intent, "documents": result.documents, "context": result.context, "sources": result.sources}; info["success"] = True; info["documents"] = len(result.documents); info["sources"] = len(result.sources); emit("mcp.tool.result", trace_id="unknown", tool="search_weather", success=True, documents=len(result.documents), sources=len(result.sources)); return payload
 
 @mcp.tool()
 def ask_weather(query: str, top_k: int = 5, location: str | None = None, state: str | None = None) -> dict[str, Any]:
