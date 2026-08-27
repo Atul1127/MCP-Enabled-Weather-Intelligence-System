@@ -72,7 +72,9 @@ def _generate(contents: Any, *, config_kwargs: dict[str, Any], require_text: boo
     errors: list[str] = []
     for model in models or _gemini_models():
         kwargs = dict(config_kwargs)
-        if not model.startswith(_GEMINI_3_PREFIXES):
+        if model.startswith(_GEMINI_3_PREFIXES):
+            kwargs.pop("temperature", None)
+        else:
             kwargs.setdefault("temperature", 0.0)
         config = types.GenerateContentConfig(**kwargs)
         for attempt in range(_GEMINI_RETRY_ATTEMPTS):
@@ -114,7 +116,7 @@ def generate_structured(*, contents: Any, system_instruction: str, response_sche
 
 
 def generate_with_tools(*, contents: Any, system_instruction: str, declarations: list[Any], max_output_tokens: int = 700, client: Any | None = None, model: str | None = None) -> Any:
-    """Generate a tool-selection response using the shared provider policy."""
+    """Generate a tool-selection response using the shared Gemini policy."""
     from google.genai import types
     config_kwargs = _base_config_kwargs()
     config_kwargs.update({"system_instruction": system_instruction, "max_output_tokens": max_output_tokens, "tools": [types.Tool(function_declarations=declarations)]})
