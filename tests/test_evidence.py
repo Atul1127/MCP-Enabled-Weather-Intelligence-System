@@ -3,11 +3,10 @@ from weather_agent_core.evidence import RAGEvidence, normalize_tool_result
 from weather_agent_core.state import AgentState
 
 
-def test_invalid_citations_are_removed_and_valid_source_is_kept():
+def test_invalid_citations_are_removed_without_fabricating_valid_sources():
     answer, sources = validate("Rain is likely [S9].", [{"citation": "S1", "source": "weather-kb"}])
-    assert "S9" not in answer
-    assert "[S1]" in answer
-    assert sources[0]["citation"] == "S1"
+    assert answer == "Rain is likely."
+    assert sources == []
 
 
 def test_rag_tool_result_becomes_one_evidence_object():
