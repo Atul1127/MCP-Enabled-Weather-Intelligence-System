@@ -1,12 +1,8 @@
 """Stage-by-stage benchmark for the local weather retrieval stack.
 
-The benchmark compares the retrieval stages independently so improvements can be
-measured rather than assumed:
-
-    dense -> BM25 -> hybrid RRF -> hybrid + cross-encoder -> hybrid + reranker + MMR
-
-Each case has one canonical gold document ID. Metrics therefore focus on Hit@1,
-Hit@5, MRR and nDCG@5, with latency reported per stage. No Gemini calls are made.
+Compares dense, BM25, hybrid RRF, cross-encoder reranking, and MMR. Each case
+has a canonical gold document ID, so Hit@K/MRR/nDCG are document-level metrics.
+Gemini is not called by this benchmark.
 """
 from __future__ import annotations
 
@@ -58,19 +54,10 @@ def _metrics(documents: list[dict[str, Any]], gold: str) -> dict[str, float]:
     }
 
 
-def _retrieve_stages(query: str, store: Any, allowed: list[int]) -> dict[str, list[dict[str, Any]]]:
-    dense = dense_search(store, query, CANDIDATE_K, allowed)
-    sparse = sparse_search(store, query, CANDIDATE_K, allowed)
-    hybrid = fuse(dense, sparse, CANDIDATE_K)
-    reranked = rerank(query, hybrid, CANDIDATE_K)
-    mmr = select_mmr(reranked, FINAL_K, lambda_mult=0.75)
-    return {
-        "dense": dense[:FINAL_K],
-        "bm25": sparse[:FINAL_K],
-        "hybrid": hybrid[:FINAL_K],
-        "reranked": reranked[:FINAL_K],
-        "reranked_mmr": mmr,
-    }
+def _timed(fn):
+    started = time.perf_counter()
+    value = fn()
+    return value, (time.perf_counter() - started) * 1000
 
 
 def benchmark_cases(cases: list[dict[str, Any]], store: Any) -> dict[str, Any]:
@@ -80,19 +67,27 @@ def benchmark_cases(cases: list[dict[str, Any]], store: Any) -> dict[str, Any]:
         query = case["question"]
         gold = str(case["gold_source"])
         allowed = store.filtered_rows()
-        stages = _retrieve_stages(query, store, allowed)
 
-        for stage, documents in stages.items():
-            started = time.perf_counter()
-            # Metric computation is intentionally timed separately from retrieval.
-            metrics = _metrics(documents, gold)
-            metric_ms = (time.perf_counter() - started) * 1000
+        dense, dense_ms = _timed(lambda: dense_search(store, query, CANDIDATE_K, allowed))
+        sparse, sparse_ms = _timed(lambda: sparse_search(store, query, CANDIDATE_K, allowed))
+        hybrid, hybrid_ms = _timed(lambda: fuse(dense, sparse, CANDIDATE_K))
+        reranked, rerank_ms = _timed(lambda: rerank(query, hybrid, CANDIDATE_K))
+        mmr, mmr_ms = _timed(lambda: select_mmr(reranked, FINAL_K, lambda_mult=0.75))
+
+        results = {
+            "dense": (dense[:FINAL_K], dense_ms),
+            "bm25": (sparse[:FINAL_K], sparse_ms),
+            "hybrid": (hybrid[:FINAL_K], hybrid_ms),
+            "reranked": (reranked[:FINAL_K], rerank_ms),
+            "reranked_mmr": (mmr, mmr_ms),
+        }
+        for stage, (documents, latency_ms) in results.items():
             stage_rows[stage].append({
                 "id": case["id"],
                 "category": case["category"],
                 "gold_source": gold,
-                "latency_ms": round(metric_ms, 4),
-                **metrics,
+                "latency_ms": round(latency_ms, 3),
+                **_metrics(documents, gold),
             })
 
     summary: dict[str, dict[str, float | int]] = {}
@@ -104,8 +99,9 @@ def benchmark_cases(cases: list[dict[str, Any]], store: Any) -> dict[str, Any]:
             "hit_at_5": round(statistics.mean(r["hit_at_5"] for r in rows), 4),
             "mrr": round(statistics.mean(r["mrr"] for r in rows), 4),
             "ndcg_at_5": round(statistics.mean(r["ndcg_at_5"] for r in rows), 4),
-            "metric_p50_ms": round(statistics.median(latencies), 4) if latencies else 0.0,
-            "metric_p95_ms": round(percentile(latencies, 0.95), 4),
+            "mean_latency_ms": round(statistics.mean(latencies), 3) if latencies else 0.0,
+            "p50_latency_ms": round(statistics.median(latencies), 3) if latencies else 0.0,
+            "p95_latency_ms": round(percentile(latencies, 0.95), 3),
         }
 
     return {
