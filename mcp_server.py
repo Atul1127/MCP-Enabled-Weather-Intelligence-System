@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 import lakebase, weather_client
-from mcp.server import MCPServer
+from mcp.server.mcpserver import MCPServer
 from rag.pipeline import RAGPipeline
 from observability import emit, span
 
