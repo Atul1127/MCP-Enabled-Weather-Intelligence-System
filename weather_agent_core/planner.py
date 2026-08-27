@@ -1,7 +1,35 @@
-"""Build an explicit, auditable execution plan from the routed intent."""
+"""Build explicit, auditable execution plans from routed intent."""
 from __future__ import annotations
 
+from dataclasses import asdict, dataclass
+import re
+
 from .router import classify
+
+
+@dataclass(frozen=True)
+class PlanStep:
+    id: str
+    capability: str
+    preferred_tools: tuple[str, ...]
+    required: bool = True
+    parallelizable: bool = True
+
+
+@dataclass(frozen=True)
+class ExecutionPlan:
+    intent: str
+    steps: tuple[PlanStep, ...]
+    requires_live_data: bool
+    requires_knowledge: bool
+
+    def as_dict(self) -> dict:
+        return {
+            "intent": self.intent,
+            "requires_live_data": self.requires_live_data,
+            "requires_knowledge": self.requires_knowledge,
+            "steps": [asdict(step) for step in self.steps],
+        }
 
 
 class Planner:
@@ -9,15 +37,39 @@ class Planner:
 
     def build(self, query: str) -> dict:
         intent = classify(query)
-        if intent == "knowledge":
-            steps = [{"capability": "knowledge", "preferred_tools": ["search_weather", "ask_weather"]}]
-        elif intent == "activity_risk":
-            steps = [{"capability": "risk", "preferred_tools": ["assess_weather_risk"]},
-                     {"capability": "alerts", "preferred_tools": ["get_weather_alerts"]}]
-        elif intent == "comparison":
-            steps = [{"capability": "comparison_evidence", "preferred_tools": ["get_forecast", "get_weather", "assess_weather_risk"]},
-                     {"capability": "knowledge", "preferred_tools": ["search_weather"]}]
+        text = query.lower()
+        comparison = intent == "comparison"
+        risk = intent == "activity_risk"
+        knowledge = intent == "knowledge"
+        live = intent in {"live_weather", "activity_risk", "comparison"}
+
+        if knowledge:
+            steps = (
+                PlanStep("knowledge", "knowledge", ("search_weather", "ask_weather")),
+            )
+        elif risk:
+            steps = (
+                PlanStep("risk", "risk", ("assess_weather_risk",)),
+                PlanStep("alerts", "alerts", ("get_weather_alerts",), required=False),
+            )
+        elif comparison:
+            steps = (
+                PlanStep("comparison_evidence", "comparison_evidence", ("get_forecast", "get_weather", "assess_weather_risk")),
+                PlanStep("comparison_knowledge", "knowledge", ("search_weather",), required=False),
+            )
         else:
-            steps = [{"capability": "live_weather", "preferred_tools": ["get_weather", "get_forecast", "get_weather_alerts"]},
-                     {"capability": "risk", "preferred_tools": ["assess_weather_risk"]}]
-        return {"intent": intent, "steps": steps}
+            preferred = ("get_forecast", "get_weather") if any(x in text for x in ("forecast", "tomorrow", "next week")) else ("get_weather", "get_forecast")
+            steps = (
+                PlanStep("live_weather", "live_weather", preferred),
+                PlanStep("hazards", "alerts", ("get_weather_alerts",), required=False),
+            )
+
+        # The planner is deliberately deterministic and inspectable. Gemini
+        # remains the reasoning layer that chooses concrete calls/arguments.
+        plan = ExecutionPlan(
+            intent=intent,
+            steps=steps,
+            requires_live_data=live,
+            requires_knowledge=knowledge or comparison,
+        )
+        return plan.as_dict()
