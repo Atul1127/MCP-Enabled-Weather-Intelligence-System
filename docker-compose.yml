@@ -4,15 +4,15 @@ services:
     container_name: weather-rag-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: weather_rag
-      POSTGRES_USER: weather_user
-      POSTGRES_PASSWORD: weather_password
+      POSTGRES_DB: ${POSTGRES_DB:-weather_rag}
+      POSTGRES_USER: ${POSTGRES_USER:-weather_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
     ports:
       - "5432:5432"
     volumes:
       - weather_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U weather_user -d weather_rag"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -25,11 +25,15 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_BACKEND: local
-      DATABASE_URL: postgresql://weather_user:weather_password@postgres:5432/weather_rag
-      GEMINI_MODEL: gemini-3.6-flash
-      GEMINI_FALLBACK_MODELS: gemini-3.5-flash-lite,gemini-2.5-flash-lite
+      DATABASE_URL: postgresql://${POSTGRES_USER:-weather_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-weather_rag}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:?GEMINI_API_KEY must be set}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.6-flash}
+      GEMINI_FALLBACK_MODELS: ${GEMINI_FALLBACK_MODELS:-gemini-3.5-flash-lite,gemini-2.5-flash-lite}
+      GEMINI_THINKING_LEVEL: ${GEMINI_THINKING_LEVEL:-low}
+      GEMINI_MAX_OUTPUT_TOKENS: ${GEMINI_MAX_OUTPUT_TOKENS:-700}
       FLASK_RUN_HOST: 0.0.0.0
       FLASK_RUN_PORT: 8000
+      WEATHER_ALLOW_SYNC: "0"
     ports:
       - "8000:8000"
     depends_on:
