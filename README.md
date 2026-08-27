@@ -1,39 +1,47 @@
 # MCP-Enabled Weather Intelligence System
 
-An **MCP-first weather intelligence platform** for Indian locations. The system combines real-time weather APIs, deterministic hazard intelligence, activity-risk assessment, hybrid RAG, Gemini tool-calling, a Flask dashboard/API, Chainlit chat, observability, and evaluation.
+An **MCP-first weather intelligence platform** for Indian locations. The system combines real-time weather APIs, deterministic hazard intelligence, activity-risk assessment, modular hybrid RAG, Gemini tool-calling, a Flask dashboard/API, observability, and evaluation.
 
 ## Architecture
 
 ```text
 User
   |
-  +--> Chainlit Chat / Flask API
-  |
   v
-Gemini Agent (tool calling)
+Gemini WeatherAgent
   |
-  v
-MCP Client
+  +--> Router / Planner
   |
-  v
-MCP Server
-  +--> get_weather
-  +--> get_forecast
-  +--> get_weather_alerts
-  +--> assess_weather_risk
-  +--> search_weather
-  |
-  v
-Hybrid RAG
-  +--> Dense retrieval
-  +--> BM25
-  +--> RRF / confidence-aware fusion
-  +--> Cross-encoder reranking
-  +--> Context compression
-  +--> Gemini grounded generation
+  +--> MCP Executor
+         |
+         +--> current weather
+         +--> forecast
+         +--> hazard detection
+         +--> activity risk
+         +--> weather knowledge retrieval
+                    |
+                    v
+               RAGPipeline
+                    |
+                    +--> Query analysis / expansion
+                    +--> Metadata filtering
+                    +--> Dense retrieval
+                    +--> BM25
+                    +--> Confidence-aware RRF
+                    +--> Cross-encoder reranking
+                    +--> Context compression
+                    |
+                    v
+              Unified Evidence
+                    |
+                    v
+             Gemini Synthesizer
+                    |
+                    v
+              Grounded answer
 ```
 
-**Gemini is the only LLM provider in the application. Ollama is not required.** MCP remains the integration boundary between the model and weather capabilities.
+**Gemini is the only LLM provider. Ollama is not required.** MCP remains the integration boundary between model reasoning and weather capabilities.
 
 ## Highlights
 
@@ -42,10 +50,11 @@ Hybrid RAG
 - **Live weather + 7-day forecast** through Open-Meteo
 - **Deterministic hazard intelligence** for rain, wind, heat, and thunderstorms
 - **Deterministic activity-risk scoring** from forecast signals
-- **Hybrid RAG** using dense retrieval + BM25 + RRF
-- **Cross-encoder reranking** with warm/cold latency instrumentation
+- **Hybrid RAG** using dense retrieval + BM25 + confidence-aware RRF
+- **Cross-encoder reranking**
+- **Query-aware context compression**
+- **Typed evidence layer** separating live weather, risk, alerts, and RAG evidence
 - **Grounded Gemini synthesis** with citation preservation
-- **Chainlit conversational UI**
 - **Flask dashboard and HTTP API**
 - **Trace-level observability** for routing, MCP, RAG, reranking, and generation
 - **Retrieval, RAG, agent, and answer-quality evaluation suites**
@@ -58,7 +67,7 @@ Set the API key in the environment:
 export GEMINI_API_KEY="your-key"
 ```
 
-Optional model configuration:
+Optional configuration:
 
 ```bash
 export GEMINI_MODEL=gemini-3.6-flash
@@ -66,8 +75,6 @@ export GEMINI_FALLBACK_MODELS=gemini-3.5-flash-lite,gemini-2.5-flash-lite
 export GEMINI_THINKING_LEVEL=low
 export GEMINI_MAX_OUTPUT_TOKENS=700
 ```
-
-The application automatically retries transient Gemini 429/5xx capacity errors and can fall back to the configured Gemini models.
 
 ## Setup
 
@@ -92,21 +99,7 @@ python mcp_client.py
 python agent.py "What weather conditions are typically associated with heavy rainfall?"
 ```
 
-The legacy `weather_agent.py` command is now a compatibility wrapper around the same Gemini agent:
-
-```bash
-python weather_agent.py "What is the weather in Kolkata right now?"
-```
-
-## Chainlit
-
-Start the conversational UI:
-
-```bash
-chainlit run chainlit_app.py -w
-```
-
-The UI displays the active Gemini model and uses the same canonical MCP agent as the CLI.
+`weather_agent.py` is retained only as a backward-compatible wrapper around the same canonical `WeatherAgent` implementation.
 
 ## Flask
 
@@ -116,13 +109,7 @@ Start the dashboard/API:
 python app.py
 ```
 
-Open:
-
-```text
-http://127.0.0.1:8000/
-```
-
-Useful endpoints include:
+Useful endpoints:
 
 ```text
 GET  /healthz
@@ -140,53 +127,40 @@ POST /weather/sync
 | `get_forecast` | Specific future-day forecast |
 | `get_weather_alerts` | Forecast-based hazard detection |
 | `assess_weather_risk` | Deterministic activity-risk assessment |
-| `search_weather` | Hybrid weather knowledge retrieval + grounded answer |
-| `ask_weather` | Existing grounded RAG answer path |
+| `search_weather` | Hybrid weather knowledge retrieval and evidence preparation |
+| `ask_weather` | Alias for weather knowledge evidence retrieval |
+| `sync_weather` | Fetch and persist fresh weather data |
+| `database_health` | Lakebase/PostgreSQL health check |
 
-## Hybrid RAG
+## Modular RAG
 
 ```text
 Query
   |
+  +--> Query analysis
+  +--> Query expansion when needed
+  +--> Metadata filtering
   +--> Dense retrieval
   +--> BM25 retrieval
           |
           v
-     RRF / confidence-aware fusion
+   Confidence-aware RRF
           |
           v
-     Cross-encoder reranking
+   Cross-encoder reranking
           |
           v
-     Context compression
+   Context compression
           |
           v
-     Gemini generation
-          |
-          v
-     Citation processing
+      RAG evidence
 ```
 
-The retrieval layer is local and does not require an external vector database for the local benchmark path. Gemini is used for query/generation stages where configured by the RAG implementation.
+The local benchmark path uses the file-backed `LocalRagStore`. PostgreSQL/Lakebase remains available for managed weather-data persistence. The final agent answer is generated by Gemini outside the retrieval layer.
 
 ## Observability
 
-Every agent request can produce a trace covering stages such as:
-
-```text
-agent.reason
-agent.route
-agent.execute_tools
-mcp.search_weather
-rag.store_load
-rag.query_planning
-retrieval
-reranking
-context_compression
-prompt_construction
-generation
-citation_processing
-```
+Agent, MCP, retrieval, reranking, context compression, and synthesis stages emit trace events with a trace ID. Set `WEATHER_TRACE_PATH` to change the JSONL destination.
 
 Inspect a trace with:
 
@@ -208,7 +182,7 @@ Retrieval benchmark:
 python evaluation/retrieval_benchmark.py
 ```
 
-Local RAG/LLM evaluation:
+RAG LLM evaluation:
 
 ```bash
 python evaluation/rag_llm_eval.py
@@ -220,32 +194,31 @@ Agent benchmark:
 python evaluation/agent_benchmark.py
 ```
 
-The project evaluates both implementation correctness and model behavior. Retrieval metrics include Hit@1, Recall@5, MRR, and latency percentiles; RAG evaluation includes success, evidence recall, faithfulness, relevance, evidence relevance, and citation validity.
+The project measures retrieval quality, tool-selection accuracy, argument accuracy, latency, evidence relevance, faithfulness, and citation behavior.
 
 ## Key technologies
 
-- **Gemini API / Google GenAI SDK** — agent reasoning, tool calling, and grounded generation
+- **Gemini API / Google GenAI SDK** — agent reasoning, tool calling, and grounded synthesis
 - **MCP v2** — protocol-based tool discovery and orchestration
 - **Open-Meteo** — weather and forecast data
-- **Sentence Transformers** — dense embeddings and reranking
+- **Sentence Transformers** — dense embeddings and cross-encoder reranking
 - **BM25** — lexical retrieval
 - **RRF** — hybrid ranking
 - **Flask** — API/dashboard
-- **Chainlit** — conversational agent UI
 - **PostgreSQL / pgvector** — persistence/vector search where configured
 - **Python** — application and MCP implementation
 
 ## Project structure
 
 ```text
-agent.py                    Canonical Gemini MCP agent
+agent.py                    Canonical CLI + compatibility API
 weather_agent.py            Backward-compatible CLI wrapper
+weather_agent_core/         Router, planner, executor, state, evidence, synthesis
 llm_provider.py             Gemini-only generation provider
 mcp_client.py               MCP stdio client + tool discovery
 mcp_server.py               MCP server + weather/RAG tools
-rag_service.py              Hybrid retrieval/RAG pipeline
-advanced_rag.py             Advanced retrieval components
-chainlit_app.py             Chainlit conversational UI
+rag/                        Modular RAG pipeline
+rag_service.py              Thin HTTP-facing RAG adapter
 app.py                      Flask dashboard/API
 evaluation/                 Benchmarks, traces, and answer evaluation
 tests/                      Unit and integration tests
@@ -254,8 +227,6 @@ docs/                       Architecture/documentation
 
 ## Design goal
 
-The project demonstrates a production-oriented pattern:
+> **Gemini decides which capability is needed, MCP provides the capability boundary, deterministic weather logic handles safety-sensitive scoring, and modular hybrid RAG provides grounded domain knowledge.**
 
-> **Gemini decides which capability is needed, MCP provides the capability boundary, deterministic weather logic handles safety-sensitive scoring, and hybrid RAG provides grounded domain knowledge.**
-
-This keeps model reasoning, tools, retrieval, and application logic cleanly separated and observable.
+The evidence layer keeps live observations, forecasts, risk classifications, alerts, and retrieved knowledge distinct so the final answer can remain grounded and auditable.
