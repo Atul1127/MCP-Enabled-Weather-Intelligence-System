@@ -16,13 +16,13 @@ def model_name() -> str:
     return os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
 
 
-def _gemini_models() -> list[str]:
-    primary = model_name()
+def _gemini_models(primary: str | None = None) -> list[str]:
+    primary_name = primary or model_name()
     configured = os.environ.get(
         "GEMINI_FALLBACK_MODELS",
         "gemini-3.5-flash-lite,gemini-2.5-flash-lite",
     )
-    return list(dict.fromkeys([primary] + [item.strip() for item in configured.split(",") if item.strip()]))
+    return list(dict.fromkeys([primary_name] + [item.strip() for item in configured.split(",") if item.strip()]))
 
 
 def _gemini_client() -> Any:
@@ -66,7 +66,12 @@ def _gemini_max_output_tokens() -> int:
     return value
 
 
-def _base_config(*, temperature: float | None = 0.0, **extra: Any) -> Any:
+def _config_for_model(
+    model: str,
+    *,
+    temperature: float | None = 0.0,
+    **extra: Any,
+) -> Any:
     from google.genai import types
 
     kwargs: dict[str, Any] = {
@@ -77,7 +82,7 @@ def _base_config(*, temperature: float | None = 0.0, **extra: Any) -> Any:
         **extra,
     }
     # Gemini 3.5+ removed legacy sampling controls.
-    if temperature is not None and not model_name().startswith(
+    if temperature is not None and not model.startswith(
         ("gemini-3.5", "gemini-3.6", "gemini-3.7")
     ):
         kwargs["temperature"] = temperature
@@ -88,11 +93,12 @@ def _generate_with_fallback(
     *,
     contents: Any,
     config_factory: Any,
+    primary_model: str | None = None,
 ) -> tuple[Any, str]:
     client = _gemini_client()
     errors: list[str] = []
 
-    for model in _gemini_models():
+    for model in _gemini_models(primary_model):
         for attempt in range(2):
             try:
                 response = client.models.generate_content(
@@ -114,29 +120,12 @@ def _generate_with_fallback(
     )
 
 
-def _config_for_model(
-    model: str,
+def generate_text(
+    messages: list[dict[str, str]],
     *,
-    temperature: float | None = 0.0,
-    **extra: Any,
-) -> Any:
-    from google.genai import types
-
-    kwargs: dict[str, Any] = {
-        "max_output_tokens": _gemini_max_output_tokens(),
-        "thinking_config": types.ThinkingConfig(
-            thinking_level=_gemini_thinking_level()
-        ),
-        **extra,
-    }
-    if temperature is not None and not model.startswith(
-        ("gemini-3.5", "gemini-3.6", "gemini-3.7")
-    ):
-        kwargs["temperature"] = temperature
-    return types.GenerateContentConfig(**kwargs)
-
-
-def generate_text(messages: list[dict[str, str]], *, temperature: float = 0.0) -> str:
+    temperature: float = 0.0,
+    model: str | None = None,
+) -> str:
     """Generate plain text through the single Gemini provider."""
     contents: list[str] = []
     for message in messages:
@@ -151,13 +140,14 @@ def generate_text(messages: list[dict[str, str]], *, temperature: float = 0.0) -
         )
         contents.append(prefix + content)
 
-    def factory(model: str) -> Any:
-        return _config_for_model(model, temperature=temperature)
+    def factory(selected_model: str) -> Any:
+        return _config_for_model(selected_model, temperature=temperature)
 
     try:
         response, _ = _generate_with_fallback(
             contents="\n\n".join(contents),
             config_factory=factory,
+            primary_model=model,
         )
     except Exception as exc:
         raise RuntimeError(f"Gemini generation failed: {exc}") from exc
@@ -174,13 +164,14 @@ def generate_with_tools(
     declarations: Sequence[Any],
     system_instruction: str,
     temperature: float | None = 0.0,
+    model: str | None = None,
 ) -> Any:
     """Generate with Gemini function declarations; callers execute returned calls."""
     from google.genai import types
 
-    def factory(model: str) -> Any:
+    def factory(selected_model: str) -> Any:
         return _config_for_model(
-            model,
+            selected_model,
             temperature=temperature,
             system_instruction=system_instruction,
             tools=[types.Tool(function_declarations=list(declarations))],
@@ -192,6 +183,7 @@ def generate_with_tools(
     response, _ = _generate_with_fallback(
         contents=list(contents),
         config_factory=factory,
+        primary_model=model,
     )
     return response
 
@@ -202,16 +194,19 @@ def generate_structured(
     system_instruction: str,
     response_schema: dict[str, Any],
     temperature: float | None = 0.0,
+    model: str | None = None,
 ) -> str:
     """Generate JSON text using Gemini's response schema."""
-    def factory(model: str) -> Any:
+    from google.genai import types
+
+    def factory(selected_model: str) -> Any:
         return _config_for_model(
-            model,
+            selected_model,
             temperature=temperature,
             system_instruction=system_instruction,
-            automatic_function_calling=__import__(
-                "google.genai", fromlist=["types"]
-            ).types.AutomaticFunctionCallingConfig(disable=True),
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                disable=True
+            ),
             response_mime_type="application/json",
             response_schema=response_schema,
         )
@@ -219,6 +214,7 @@ def generate_structured(
     response, _ = _generate_with_fallback(
         contents=contents,
         config_factory=factory,
+        primary_model=model,
     )
     text = (response.text or "").strip()
     if not text:
