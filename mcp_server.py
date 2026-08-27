@@ -5,18 +5,20 @@ from typing import Any
 import os
 import sys
 from mcp.server.fastmcp import FastMCP
-import advanced_rag, lakebase, weather_client
+import lakebase, weather_client
+from rag.pipeline import RAGPipeline
 from observability import emit, span
 
 mcp = FastMCP("indian-weather-intelligence")
+_rag = RAGPipeline()
 
 
 def _warmup_rag() -> None:
-    """Optionally preload local RAG models before serving requests."""
     if os.environ.get("WEATHER_RAG_PRELOAD", "0").strip().lower() in {"0", "false", "no", "off"}:
         return
     try:
-        advanced_rag.reranker()
+        from advanced_rag import reranker
+        reranker()
     except Exception as exc:
         print(f"RAG model preload warning: {exc}", file=sys.stderr, flush=True)
 
@@ -40,15 +42,6 @@ def _daily_summary(weather: dict[str, Any], target: str) -> dict[str, Any]:
     code=value("weather_code")
     return {"date":target,"condition":weather_client.weather_description(code),"weather_code":code,"severity":weather_client.weather_severity(code),"temperature_min_c":value("temperature_2m_min"),"temperature_max_c":value("temperature_2m_max"),"apparent_temperature_max_c":value("apparent_temperature_max"),"precipitation_mm":value("precipitation_sum"),"rain_mm":value("rain_sum"),"precipitation_probability_pct":value("precipitation_probability_max"),"max_wind_kmh":value("wind_speed_10m_max"),"sunrise":value("sunrise"),"sunset":value("sunset")}
 
-@mcp.tool()
-def get_weather(location: str) -> dict[str, Any]:
-    """Get current weather and a 7-day forecast. current_summary is authoritative for current conditions."""
-    location=location.strip() if location else ""
-    if not location: raise ValueError("location cannot be empty")
-    details=weather_client.geocode_location_details(location)
-    if not details: return {"success":False,"error":f"Could not resolve location: {location}"}
-    weather=weather_client.fetch_weather(details["latitude"],details["longitude"]); current=weather.get("current",{}); daily=weather.get("daily",{})
-    return {"success":True,"location":details,"timezone":weather.get("timezone"),"current":current,"current_summary":_current_summary(current,daily,weather.get("timezone")),"daily":daily,"forecast_summary":[_daily_summary(weather,d) for d in daily.get("time") or []]}
 
 def _current_time_of_day(current_time: str | None, daily: dict[str, Any]) -> str:
     if not current_time: return "unknown"
@@ -59,9 +52,20 @@ def _current_time_of_day(current_time: str | None, daily: dict[str, Any]) -> str
     except (ValueError,IndexError,TypeError): pass
     return "unknown"
 
+
 def _current_summary(current: dict[str, Any], daily: dict[str, Any], timezone: str | None) -> dict[str, Any]:
     code=current.get("weather_code")
     return {"observation_time":current.get("time"),"timezone":timezone,"time_of_day":_current_time_of_day(current.get("time"),daily),"condition":weather_client.weather_description(code),"weather_code":code,"temperature_c":current.get("temperature_2m"),"apparent_temperature_c":current.get("apparent_temperature"),"relative_humidity_pct":current.get("relative_humidity_2m"),"cloud_cover_pct":current.get("cloud_cover"),"precipitation_mm":current.get("precipitation"),"wind_speed_kmh":current.get("wind_speed_10m"),"wind_direction_deg":current.get("wind_direction_10m")}
+
+@mcp.tool()
+def get_weather(location: str) -> dict[str, Any]:
+    """Get current weather and a 7-day forecast."""
+    location=location.strip() if location else ""
+    if not location: raise ValueError("location cannot be empty")
+    details=weather_client.geocode_location_details(location)
+    if not details: return {"success":False,"error":f"Could not resolve location: {location}"}
+    weather=weather_client.fetch_weather(details["latitude"],details["longitude"]); current=weather.get("current",{}); daily=weather.get("daily",{})
+    return {"success":True,"location":details,"timezone":weather.get("timezone"),"current":current,"current_summary":_current_summary(current,daily,weather.get("timezone")),"daily":daily,"forecast_summary":[_daily_summary(weather,d) for d in daily.get("time") or []]}
 
 @mcp.tool()
 def get_forecast(location: str, date: str = "tomorrow") -> dict[str, Any]:
@@ -90,7 +94,7 @@ def get_weather_alerts(location: str) -> dict[str, Any]:
 
 @mcp.tool()
 def assess_weather_risk(location: str, activity: str = "outdoor activity", date: str = "tomorrow") -> dict[str, Any]:
-    """Assess activity risk for a specific forecast date; defaults to tomorrow."""
+    """Assess activity risk for a specific forecast date."""
     weather=get_weather(location)
     if not weather.get("success"): return weather
     target=_target_date(date,weather.get("daily",{})); f=_daily_summary(weather,target); rain_probability=f["precipitation_probability_pct"] or 0; precipitation=f["precipitation_mm"] or 0; wind=f["max_wind_kmh"] or 0; apparent=f["apparent_temperature_max_c"] or 0; code=f["weather_code"] or 0
@@ -109,23 +113,22 @@ def assess_weather_risk(location: str, activity: str = "outdoor activity", date:
 
 @mcp.tool()
 def search_weather(query: str, top_k: int = 5, location: str | None = None, state: str | None = None) -> dict[str, Any]:
-    """Search weather knowledge with hybrid RRF retrieval and reranking."""
-    trace_id = os.environ.get("WEATHER_TRACE_ID")
-    with span("mcp.search_weather", trace_id=trace_id or "unknown", tool="search_weather") as info:
-        started = datetime.now().timestamp()
-        result = advanced_rag.answer(query.strip(),top_k=max(1,min(20,int(top_k))),location=location,state=state) if query and query.strip() else {"success":False,"error":"query cannot be empty"}
-        info["success"] = bool(result.get("success", False)) if isinstance(result, dict) else True
-        info["rag_latency_ms"] = result.get("latency_ms") if isinstance(result, dict) else None
-        info["result_chars"] = len(str(result.get("answer", ""))) if isinstance(result, dict) else len(str(result))
-        info["handler_overhead_ms"] = round((datetime.now().timestamp() - started) * 1000 - float(info.get("rag_latency_ms") or 0), 2)
-        emit("mcp.tool.result", trace_id=trace_id or "unknown", tool="search_weather", success=info["success"], rag_latency_ms=info["rag_latency_ms"], handler_overhead_ms=info["handler_overhead_ms"], result_chars=info["result_chars"])
-        return result
+    """Search weather knowledge through the modular RAG pipeline."""
+    trace_id=os.environ.get("WEATHER_TRACE_ID") or "unknown"
+    if not query or not query.strip(): return {"success":False,"error":"query cannot be empty"}
+    with span("mcp.search_weather", trace_id=trace_id, tool="search_weather") as info:
+        result=_rag.retrieve(query.strip(),location=location,state=state)
+        sources=result.sources
+        payload={"success":True,"query":query.strip(),"intent":result.plan.intent,"documents":result.documents,"context":result.context,"sources":sources}
+        info["success"]=True; info["documents"]=len(result.documents); info["sources"]=len(sources)
+        emit("mcp.tool.result",trace_id=trace_id,tool="search_weather",success=True,documents=len(result.documents),sources=len(sources))
+        return payload
 
 @mcp.tool()
 def ask_weather(query: str, top_k: int = 5, location: str | None = None, state: str | None = None) -> dict[str, Any]:
-    """Generate a grounded weather answer with advanced local RAG."""
-    if not query or not query.strip(): raise ValueError("query cannot be empty")
-    return advanced_rag.answer(query.strip(),top_k=max(1,min(20,int(top_k))),location=location,state=state)
+    """Retrieve and return grounded weather knowledge evidence; generation is handled by the agent synthesizer."""
+    result=search_weather(query,top_k,location,state)
+    return result
 
 @mcp.tool()
 def sync_weather(locations: list[str]) -> dict[str, Any]:
