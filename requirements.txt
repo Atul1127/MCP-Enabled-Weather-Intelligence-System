@@ -13,8 +13,10 @@ google-genai>=1.0.0
 
 rank-bm25>=0.2.2
 
-# MCP v2: current stable SDK line for the 2026-07-28 protocol.
+# MCP v2: current stable SDK line.
 mcp[cli]>=2.0.0,<3.0
 
-# Test runner used by the repository test suite.
+# Agent orchestration.
+langgraph>=0.6.0,<1.0
+
 pytest>=8.0.0
