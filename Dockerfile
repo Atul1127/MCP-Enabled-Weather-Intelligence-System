@@ -12,9 +12,8 @@ COPY . .
 
 ENV DATABASE_BACKEND=local
 ENV DATABASE_URL=postgresql://weather_user:weather_password@postgres:5432/weather_rag
-ENV OLLAMA_HOST=http://host.docker.internal:11434
-ENV WEATHER_LLM_MODEL=llama3.2:3b
-ENV WEATHER_AGENT_MODEL=llama3.2:3b
+ENV GEMINI_MODEL=gemini-3.6-flash
+ENV GEMINI_FALLBACK_MODELS=gemini-3.5-flash-lite,gemini-2.5-flash-lite
 ENV FLASK_RUN_HOST=0.0.0.0
 ENV FLASK_RUN_PORT=8000
 
