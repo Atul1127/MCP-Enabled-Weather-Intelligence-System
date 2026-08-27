@@ -1,0 +1,6 @@
+[
+  {"query":"Why does humidity make hot weather uncomfortable?","intent":"knowledge","requires_live_data":false,"requires_knowledge":true},
+  {"query":"What is the weather in Mumbai tomorrow?","intent":"live_weather","requires_live_data":true,"requires_knowledge":false},
+  {"query":"Is cricket safe tomorrow in Kolkata?","intent":"activity_risk","requires_live_data":true,"requires_knowledge":false},
+  {"query":"Compare Delhi and Kolkata for outdoor sports tomorrow.","intent":"comparison","requires_live_data":true,"requires_knowledge":true}
+]
