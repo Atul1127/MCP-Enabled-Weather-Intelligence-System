@@ -1,9 +1,20 @@
-"""Indian Weather Intelligence MCP server (MCP Python SDK v2)."""
+"""Indian Weather Intelligence MCP server with MCP SDK v1/v2 compatibility."""
 from __future__ import annotations
 from datetime import datetime
 from typing import Any
 import lakebase, weather_client
-from mcp.server import MCPServer
+
+# MCP SDK v2: MCPServer is public from mcp.server. SDK v1: FastMCP is
+# exposed from mcp.server.fastmcp. The fallback keeps an existing local venv
+# usable while requirements.txt pins the supported v2 line for fresh installs.
+try:
+    from mcp.server import MCPServer
+except ImportError:
+    try:
+        from mcp.server.mcpserver import MCPServer
+    except ImportError:
+        from mcp.server.fastmcp import FastMCP as MCPServer
+
 from rag.pipeline import RAGPipeline
 from observability import emit, span
 
@@ -12,8 +23,7 @@ _rag = RAGPipeline()
 
 def _target_date(value: str | None, daily: dict[str, Any]) -> str:
     dates = daily.get("time") or []
-    if not dates:
-        raise ValueError("Forecast contains no dates")
+    if not dates: raise ValueError("Forecast contains no dates")
     text = (value or "tomorrow").strip().lower()
     if text == "today": return dates[0]
     if text == "tomorrow": return dates[1] if len(dates) > 1 else dates[0]
