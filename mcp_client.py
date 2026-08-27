@@ -62,21 +62,10 @@ async def discover_resources(session: ClientSession) -> list[dict[str, Any]]:
     templates_response = await session.list_resource_templates()
     templates = getattr(templates_response, "resource_templates", None) or []
     return [
-        {
-            "kind": "resource",
-            "uri": str(getattr(item, "uri", "")),
-            "name": str(getattr(item, "name", "")),
-            "description": str(getattr(item, "description", "") or ""),
-            "mime_type": getattr(item, "mime_type", None) or getattr(item, "mimeType", None),
-        }
+        {"kind": "resource", "uri": str(getattr(item, "uri", "")), "name": str(getattr(item, "name", "")), "description": str(getattr(item, "description", "") or ""), "mime_type": getattr(item, "mime_type", None) or getattr(item, "mimeType", None)}
         for item in resources
     ] + [
-        {
-            "kind": "template",
-            "uri_template": str(getattr(item, "uri_template", "") or getattr(item, "uriTemplate", "")),
-            "name": str(getattr(item, "name", "")),
-            "description": str(getattr(item, "description", "") or ""),
-        }
+        {"kind": "template", "uri_template": str(getattr(item, "uri_template", "") or getattr(item, "uriTemplate", "")), "name": str(getattr(item, "name", "")), "description": str(getattr(item, "description", "") or "")}
         for item in templates
     ]
 
@@ -86,12 +75,7 @@ async def read_resource(session: ClientSession, uri: str) -> list[dict[str, Any]
     contents = getattr(result, "contents", None) or []
     normalized = []
     for item in contents:
-        normalized.append({
-            "uri": str(getattr(item, "uri", uri)),
-            "mime_type": getattr(item, "mime_type", None) or getattr(item, "mimeType", None),
-            "text": getattr(item, "text", None),
-            "blob": getattr(item, "blob", None),
-        })
+        normalized.append({"uri": str(getattr(item, "uri", uri)), "mime_type": getattr(item, "mime_type", None) or getattr(item, "mimeType", None), "text": getattr(item, "text", None), "blob": getattr(item, "blob", None)})
     return normalized
 
 async def discover_prompts(session: ClientSession) -> list[dict[str, Any]]:
@@ -99,18 +83,7 @@ async def discover_prompts(session: ClientSession) -> list[dict[str, Any]]:
     response = await session.list_prompts()
     prompts = getattr(response, "prompts", None) or []
     return [
-        {
-            "name": str(getattr(item, "name", "")),
-            "description": str(getattr(item, "description", "") or ""),
-            "arguments": [
-                {
-                    "name": str(getattr(arg, "name", "")),
-                    "description": str(getattr(arg, "description", "") or ""),
-                    "required": bool(getattr(arg, "required", False)),
-                }
-                for arg in (getattr(item, "arguments", None) or [])
-            ],
-        }
+        {"name": str(getattr(item, "name", "")), "description": str(getattr(item, "description", "") or ""), "arguments": [{"name": str(getattr(arg, "name", "")), "description": str(getattr(arg, "description", "") or ""), "required": bool(getattr(arg, "required", False))} for arg in (getattr(item, "arguments", None) or [])]}
         for item in prompts
     ]
 
@@ -128,15 +101,19 @@ async def get_prompt(session: ClientSession, name: str, arguments: dict[str, str
 async def call_tool(session: ClientSession, name: str, arguments: dict[str, Any] | None = None) -> Any:
     """Call an MCP tool and normalize structured/error responses."""
     result = await session.call_tool(name, arguments=arguments or {})
+    is_error = getattr(result, "is_error", None)
+    if is_error is None:
+        is_error = getattr(result, "isError", False)
     structured = getattr(result, "structured_content", None)
     if structured is None:
         structured = getattr(result, "structuredContent", None)
     if structured is not None:
+        if is_error:
+            if isinstance(structured, dict):
+                return {**structured, "success": False, "error": structured.get("error") or "MCP tool returned an error", "error_type": "mcp_error"}
+            return {"success": False, "error": "MCP tool returned an error", "error_type": "mcp_error", "content": structured}
         return structured
     content = getattr(result, "content", None) or []
-    is_error = getattr(result, "is_error", None)
-    if is_error is None:
-        is_error = getattr(result, "isError", False)
     texts = [getattr(item, "text", str(item)) for item in content]
     return {"success": not bool(is_error), "error": "MCP tool returned an error" if is_error else None, "content": texts}
 
