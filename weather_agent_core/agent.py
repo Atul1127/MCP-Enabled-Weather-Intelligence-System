@@ -63,18 +63,14 @@ class WeatherAgent:
     @staticmethod
     def _declarations(registry: MCPCapabilityRegistry, names: set[str] | None = None) -> list[types.FunctionDeclaration]:
         selected = registry.tools if names is None else tuple(item for item in registry.tools if item.name in names)
-        return [
-            types.FunctionDeclaration(name=item.name, description=item.description, parameters=item.schema)
-            for item in selected
-        ]
+        return [types.FunctionDeclaration(name=item.name, description=item.description, parameters=item.schema) for item in selected]
 
     async def _reason(self, messages, declarations, plan, retry_reason=None):
         instruction = (
             "You are the execution-selection layer. Follow the explicit plan and its execution groups. "
             "Use only the MCP capabilities exposed in the current tool declarations. Use MCP tools for "
             "live evidence and weather knowledge. Complete every required plan step before stopping. "
-            "Gather every required location for comparisons. Never invent live values.\n\nPLAN:\n"
-            + str(plan)
+            "Gather every required location for comparisons. Never invent live values.\n\nPLAN:\n" + str(plan)
         )
         if retry_reason:
             instruction += "\n\nVERIFIER FEEDBACK:\n" + retry_reason + "\nCorrect the missing evidence by selecting appropriate MCP tools from the exposed declarations."
@@ -86,12 +82,7 @@ class WeatherAgent:
         }
         if not self.model.startswith(("gemini-3.5", "gemini-3.6", "gemini-3.7")):
             kwargs["temperature"] = 0
-        return await asyncio.to_thread(
-            self._client_or_raise().models.generate_content,
-            model=self.model,
-            contents=messages,
-            config=types.GenerateContentConfig(**kwargs),
-        )
+        return await asyncio.to_thread(self._client_or_raise().models.generate_content, model=self.model, contents=messages, config=types.GenerateContentConfig(**kwargs))
 
     async def run(self, query: str) -> dict[str, Any]:
         query = query.strip()
@@ -132,11 +123,15 @@ class WeatherAgent:
                 if state.get("intent") and state["intent"] != runtime.intent:
                     raise RuntimeError("Router and planner intent disagree")
                 route = capability_router.route_plan(plan)
-                required_steps = [step for step in plan.get("steps", []) if step.get("required", True)]
-                required_names = {name for step in required_steps for name in step.get("preferred_tools", [])}
-                missing = sorted(required_names - set(route.selected))
-                if missing:
-                    raise RuntimeError(f"MCP plan requires unavailable tools: {', '.join(missing)}")
+                missing_groups = [
+                    sorted(set(step.get("preferred_tools", [])) - set(route.selected))
+                    for step in plan.get("steps", [])
+                    if step.get("required", True) and not set(step.get("preferred_tools", [])) & set(route.selected)
+                ]
+                missing_groups = [group for group in missing_groups if group]
+                if missing_groups:
+                    missing = ", ".join("/".join(group) for group in missing_groups)
+                    raise RuntimeError(f"MCP plan requires at least one available tool from: {missing}")
                 active_declarations = self._declarations(registry, set(route.selected))
                 emit("agent.mcp_route", trace_id=trace_id, requested=list(route.requested), selected=list(route.selected), rejected=list(route.rejected), execution_groups=plan.get("execution_groups", []))
                 return {"plan": plan, "route": runtime.route, "mcp_tools": list(route.selected)}
