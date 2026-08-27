@@ -21,28 +21,28 @@ class MCPRoute:
 
 
 class MCPCapabilityRouter:
-    """Select permitted MCP capabilities from planner capability groups.
-
-    Routing is deliberately deterministic: the planner supplies semantic
-    capability groups and the registry supplies discovered MCP schemas.
-    The router never invents a tool name or bypasses the MCP client.
-    """
+    """Select permitted MCP capabilities from planner groups or tool names."""
 
     def __init__(self, registry: MCPCapabilityRegistry) -> None:
         self.registry = registry
 
     def route(self, required: Iterable[str]) -> MCPRoute:
         requested = tuple(dict.fromkeys(v.strip().lower() for v in required if v and v.strip()))
-        matches: list[MCPCapability] = self.registry.select(requested)
-        selected = tuple(item.name for item in matches)
-        rejected = tuple(value for value in requested if not any(item.supports(value) for item in matches))
+        selected_items: list[MCPCapability] = []
+        for value in requested:
+            exact = self.registry.get(value)
+            if exact is not None:
+                selected_items.append(exact)
+                continue
+            selected_items.extend(item for item in self.registry.select([value]) if item not in selected_items)
+        selected = tuple(item.name for item in selected_items)
+        rejected = tuple(value for value in requested if not any(item.name.lower() == value or item.supports(value) for item in selected_items))
         return MCPRoute(requested=requested, selected=selected, rejected=rejected)
 
     def route_plan(self, plan: dict[str, Any]) -> MCPRoute:
-        """Route all preferred tool groups in a planner output."""
-        groups: list[str] = []
+        """Route required preferred tools from a planner output."""
+        requested: list[str] = []
         for step in plan.get("steps", []):
-            if not step.get("required", True):
-                continue
-            groups.extend(str(value) for value in step.get("preferred_tools", []))
-        return self.route(groups)
+            if step.get("required", True):
+                requested.extend(str(value) for value in step.get("preferred_tools", []))
+        return self.route(requested)
