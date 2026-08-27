@@ -2,186 +2,51 @@ import app
 
 
 def test_healthz():
-
-    client = app.app.test_client()
-
-    response = client.get(
-        "/healthz"
-    )
-
+    response = app.app.test_client().get("/healthz")
     assert response.status_code == 200
-
     data = response.get_json()
-
     assert data["status"] == "ok"
-    assert (
-        data["service"]
-        == "indian-weather-rag"
-    )
+    assert data["service"] == "indian-weather-rag"
 
 
 def test_weather_ask_missing_query():
-
-    client = app.app.test_client()
-
-    response = client.post(
-        "/weather/ask",
-        json={},
-    )
-
+    response = app.app.test_client().post("/weather/ask", json={})
     assert response.status_code == 400
-
-    data = response.get_json()
-
-    assert "error" in data
+    assert "error" in response.get_json()
 
 
 def test_weather_ask_empty_query():
-
-    client = app.app.test_client()
-
-    response = client.post(
-        "/weather/ask",
-        json={
-            "query": ""
-        },
-    )
-
+    response = app.app.test_client().post("/weather/ask", json={"query": ""})
     assert response.status_code == 400
-
-    data = response.get_json()
-
-    assert (
-    data["error"]
-    == "Missing or invalid 'query' in request body"
-)
+    assert response.get_json()["error"] == "Missing or invalid 'query' in request body"
 
 
 def test_weather_ask_invalid_top_k():
-
-    client = app.app.test_client()
-
-    response = client.post(
-        "/weather/ask",
-        json={
-            "query": "Weather in Kolkata?",
-            "top_k": "abc",
-        },
-    )
-
+    response = app.app.test_client().post("/weather/ask", json={"query": "Weather in Kolkata?", "top_k": "abc"})
     assert response.status_code == 400
-
-    data = response.get_json()
-
-    assert (
-        "'top_k' must be an integer"
-        in data["error"]
-    )
+    assert "'top_k' must be an integer" in response.get_json()["error"]
 
 
 def test_weather_ask_success(monkeypatch):
-
-    def fake_answer(
-        query,
-        top_k,
-    ):
-        return {
-            "answer": (
-                "Kolkata may receive rain. [S1]"
-            ),
-            "sources": [
-                {
-                    "citation": "S1",
-                    "location": "Kolkata",
-                }
-            ],
-            "retrieved_documents": 1,
-            "model": "llama3.2:1b",
-            "retrieval": "hybrid",
-        }
-
-    monkeypatch.setattr(
-        app.rag_service,
-        "answer_weather_question",
-        fake_answer,
-    )
-
-    client = app.app.test_client()
-
-    response = client.post(
-        "/weather/ask",
-        json={
-            "query": (
-                "What is the weather "
-                "forecast for Kolkata?"
-            ),
-            "top_k": 5,
-        },
-    )
-
+    def fake_answer(query, top_k):
+        return {"success": True, "answer": "Kolkata may receive rain. [S1]", "sources": [{"citation": "S1", "location": "Kolkata"}], "documents": [{"id": "doc1"}], "model": "gemini-3.6-flash", "intent": "knowledge"}
+    monkeypatch.setattr(app.rag_service, "answer_weather_question", fake_answer)
+    response = app.app.test_client().post("/weather/ask", json={"query": "What is the weather forecast for Kolkata?", "top_k": 5})
     assert response.status_code == 200
-
     data = response.get_json()
-
-    assert (
-        data["answer"]
-        == "Kolkata may receive rain. [S1]"
-    )
-
-    assert data["retrieved_documents"] == 1
-    assert data["retrieval"] == "hybrid"
+    assert data["answer"] == "Kolkata may receive rain. [S1]"
+    assert data["documents"] == [{"id": "doc1"}]
+    assert data["model"] == "gemini-3.6-flash"
 
 
-def test_weather_ask_database_error(
-    monkeypatch,
-):
-
-    def fake_answer(
-        query,
-        top_k,
-    ):
-        raise RuntimeError(
-            "database unavailable"
-        )
-
-    monkeypatch.setattr(
-        app.rag_service,
-        "answer_weather_question",
-        fake_answer,
-    )
-
-    client = app.app.test_client()
-
-    response = client.post(
-        "/weather/ask",
-        json={
-            "query": "Weather in Kolkata?"
-        },
-    )
-
+def test_weather_ask_service_error(monkeypatch):
+    monkeypatch.setattr(app.rag_service, "answer_weather_question", lambda query, top_k: (_ for _ in ()).throw(RuntimeError("service unavailable")))
+    response = app.app.test_client().post("/weather/ask", json={"query": "Weather in Kolkata?"})
     assert response.status_code == 500
-
-    data = response.get_json()
-
-    assert (
-        data["error"]
-        == "Failed to generate weather answer"
-    )
+    assert response.get_json()["error"] == "Failed to generate weather answer"
 
 
 def test_unknown_endpoint():
-
-    client = app.app.test_client()
-
-    response = client.get(
-        "/does-not-exist"
-    )
-
+    response = app.app.test_client().get("/does-not-exist")
     assert response.status_code == 404
-
-    data = response.get_json()
-
-    assert (
-        data["error"]
-        == "Endpoint not found"
-    )
+    assert response.get_json()["error"] == "Endpoint not found"
