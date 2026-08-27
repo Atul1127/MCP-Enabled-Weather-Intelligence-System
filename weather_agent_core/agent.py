@@ -7,6 +7,7 @@ from google import genai
 from google.genai import types
 from mcp_client import connect, discover_tools
 from observability import emit, new_trace_id, span
+from rag.citations.validator import validate as validate_citations
 from .executor import MCPExecutor
 from .planner import Planner
 from .state import AgentState
@@ -96,6 +97,9 @@ class WeatherAgent:
                     response_parts.append(types.Part.from_function_response(name=name, response=result if isinstance(result, dict) else {"result": result}, id=getattr(function_call, "id", None)))
                 contents.append(types.Content(role="user", parts=response_parts))
         answer = await GeminiSynthesizer(self._client_or_raise(), self.model).synthesize(query, state)
+        answer, cited_sources = validate_citations(answer, state.sources)
+        if cited_sources:
+            state.sources = cited_sources
         success = state.required_requirements_satisfied
         emit("agent.end", trace_id=trace_id, intent=state.intent, rounds=rounds_used, tools=len(state.tool_calls), success=success)
         return {"success": success, "answer": answer, "trace_id": trace_id, "intent": state.intent, "route": state.route, "plan": state.plan, "tool_calls": state.tool_calls, "observations": state.observations, "evidence": state.evidence_payload(), "sources": state.sources, "errors": state.errors, "rounds": rounds_used}
