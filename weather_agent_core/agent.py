@@ -185,12 +185,7 @@ class WeatherAgent:
                 if not calls:
                     return {"next_action": "finish", "rounds": round_no, "candidate": candidate.content}
                 messages.append(candidate.content)
-                return {
-                    "next_action": "tool",
-                    "pending_calls": calls,
-                    "rounds": round_no,
-                    "retry_reason": None,
-                }
+                return {"next_action": "tool", "pending_calls": calls, "rounds": round_no, "retry_reason": None}
 
             async def executor_node(state: GraphState) -> dict[str, Any]:
                 calls = list(state.get("pending_calls", []))
@@ -229,27 +224,17 @@ class WeatherAgent:
                     runtime.errors,
                 )
                 retry_count = int(state.get("retry_count", 0)) + (0 if verification["sufficient"] else 1)
-                missing = ", ".join(
-                    "/".join(group) for group in verification.get("missing_capabilities", [])
-                )
+                missing = ", ".join("/".join(group) for group in verification.get("missing_capabilities", []))
                 return {
                     "verification": verification,
                     "retry_count": retry_count,
-                    "retry_reason": (
-                        None
-                        if verification["sufficient"]
-                        else f"Missing required evidence capabilities: {missing}"
-                    ),
+                    "retry_reason": None if verification["sufficient"] else f"Missing required evidence capabilities: {missing}",
                 }
 
             async def synthesizer_node(_: GraphState) -> dict[str, Any]:
                 nonlocal structured_response
-                structured_response = await GeminiSynthesizer(
-                    self._client_or_raise(), self.model
-                ).synthesize_structured(query, runtime)
-                answer, cited_sources = validate_citations(
-                    structured_response["answer"], runtime.sources
-                )
+                structured_response = await GeminiSynthesizer(self._client_or_raise(), self.model).synthesize_structured(query, runtime)
+                answer, cited_sources = validate_citations(structured_response["answer"], runtime.sources)
                 structured_response["answer"] = answer
                 if cited_sources:
                     runtime.sources = cited_sources
@@ -265,9 +250,7 @@ class WeatherAgent:
                 max_rounds=self.max_rounds,
                 max_retries=self.max_retries,
             )
-            result = await graph.ainvoke(
-                {"query": query, "trace_id": trace_id, "rounds": 0, "retry_count": 0}
-            )
+            result = await graph.ainvoke({"query": query, "trace_id": trace_id, "rounds": 0, "retry_count": 0})
 
         success = runtime.required_requirements_satisfied
         emit(
@@ -294,5 +277,6 @@ class WeatherAgent:
             "sources": runtime.sources,
             "errors": runtime.errors,
             "rounds": result.get("rounds", 0),
+            "retry_count": result.get("retry_count", 0),
             "verification": result.get("verification", {}),
         }
