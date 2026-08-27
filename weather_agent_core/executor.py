@@ -1,4 +1,4 @@
-"""Resilient MCP execution layer with policy, timeout and bounded retries."""
+"""Resilient MCP execution layer with policy, validation, timeout and bounded retries."""
 from __future__ import annotations
 
 import asyncio
@@ -6,7 +6,9 @@ import os
 from typing import Any
 
 from mcp_client import call_tool
-from .security import validate_observation, validate_tool_arguments
+from .security import validate_observation, validate_tool_arguments, validate_tool_call
+
+MAX_FUNCTION_CALLS = max(1, int(os.environ.get("WEATHER_MAX_TOOL_CALLS", "16")))
 
 
 class MCPExecutor:
@@ -37,12 +39,22 @@ class MCPExecutor:
         raise last_error
 
     async def execute(self, function_calls: list[Any]) -> list[tuple[str, dict[str, Any], Any]]:
+        if len(function_calls) > MAX_FUNCTION_CALLS:
+            return [
+                ("__batch__", {}, {
+                    "success": False,
+                    "error": f"Too many tool calls in one round; maximum is {MAX_FUNCTION_CALLS}.",
+                    "error_type": "policy_denied",
+                })
+            ]
+
         async def one(call: Any) -> tuple[str, dict[str, Any], Any]:
             name, args = str(call.name), dict(call.args or {})
             if name not in self.allowed_tools:
                 return name, args, {"success": False, "error": f"Tool '{name}' is not allowed.", "error_type": "policy_denied"}
             try:
                 validate_tool_arguments(args)
+                validate_tool_call(name, args)
                 result = await self._call_with_retry(name, args)
                 validate_observation(result)
                 return name, args, result
