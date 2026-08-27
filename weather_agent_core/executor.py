@@ -38,6 +38,17 @@ class MCPExecutor:
         assert last_error is not None
         raise last_error
 
+    @staticmethod
+    def _sanitize_result(result: Any) -> Any:
+        """Do not feed raw remote exception text back into the model."""
+        if isinstance(result, dict) and result.get("success") is False:
+            return {
+                "success": False,
+                "error": "MCP tool reported an execution failure.",
+                "error_type": str(result.get("error_type") or "mcp_error"),
+            }
+        return result
+
     async def execute(self, function_calls: list[Any]) -> list[tuple[str, dict[str, Any], Any]]:
         batch_exceeded = len(function_calls) > MAX_FUNCTION_CALLS
 
@@ -56,12 +67,12 @@ class MCPExecutor:
                 validate_tool_call(name, args)
                 result = await self._call_with_retry(name, args)
                 validate_observation(result)
-                return name, args, result
+                return name, args, self._sanitize_result(result)
             except ValueError as exc:
                 return name, args, {"success": False, "error": str(exc), "error_type": "validation_error"}
             except asyncio.TimeoutError:
                 return name, args, {"success": False, "error": f"MCP tool '{name}' timed out after {self.timeout_seconds:g}s.", "error_type": "timeout"}
-            except Exception as exc:
-                return name, args, {"success": False, "error": str(exc), "error_type": "execution_error"}
+            except Exception:
+                return name, args, {"success": False, "error": "MCP tool execution failed.", "error_type": "execution_error"}
 
         return await asyncio.gather(*(one(call) for call in function_calls))
