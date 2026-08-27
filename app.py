@@ -1,19 +1,34 @@
 """Indian Weather RAG API and intelligence dashboard."""
-
 from __future__ import annotations
 
 import logging
 import os
+import secrets
 
 from flask import Flask, jsonify, render_template, request
 
 import lakebase
 import rag_service
 import weather_client
+from weather_agent_core.security import inspect_text, validate_location, validate_top_k, validate_user_query
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("weather-rag")
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("WEATHER_MAX_REQUEST_BYTES", "262144"))
+
+
+def _safe_location(value: object) -> str:
+    return validate_location(value)  # type: ignore[arg-type]
+
+
+def _sync_authorized() -> bool:
+    """Keep the write-heavy sync endpoint disabled unless explicitly enabled."""
+    if os.environ.get("WEATHER_ALLOW_SYNC", "0") != "1":
+        return False
+    configured = os.environ.get("WEATHER_ADMIN_API_KEY")
+    supplied = request.headers.get("X-Weather-Admin-Key", "")
+    return bool(configured) and secrets.compare_digest(supplied, configured)
 
 
 @app.route("/", methods=["GET"])
@@ -29,30 +44,32 @@ def healthz():
 @app.route("/weather/current", methods=["POST"])
 def weather_current():
     body = request.get_json(silent=True) or {}
-    location = body.get("location")
-    if not isinstance(location, str) or not location.strip():
-        return jsonify({"error": "Missing or invalid 'location'"}), 400
     try:
-        details = weather_client.geocode_location_details(location.strip())
+        location = _safe_location(body.get("location"))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    try:
+        details = weather_client.geocode_location_details(location)
         if not details:
-            return jsonify({"error": f"Could not resolve location: {location.strip()}"}), 404
+            return jsonify({"error": "Location could not be resolved"}), 404
         weather = weather_client.fetch_weather(details["latitude"], details["longitude"])
         return jsonify({"success": True, "location": details, "current": weather.get("current", {}), "daily": weather.get("daily", {})})
-    except Exception as exc:
+    except Exception:
         logger.exception("Current weather request failed")
-        return jsonify({"error": "Failed to fetch weather", "details": str(exc)}), 500
+        return jsonify({"error": "Failed to fetch weather"}), 502
 
 
 @app.route("/weather/alerts", methods=["POST"])
 def weather_alerts():
     body = request.get_json(silent=True) or {}
-    location = body.get("location")
-    if not isinstance(location, str) or not location.strip():
-        return jsonify({"error": "Missing or invalid 'location'"}), 400
     try:
-        details = weather_client.geocode_location_details(location.strip())
+        location = _safe_location(body.get("location"))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    try:
+        details = weather_client.geocode_location_details(location)
         if not details:
-            return jsonify({"error": f"Could not resolve location: {location.strip()}"}), 404
+            return jsonify({"error": "Location could not be resolved"}), 404
         weather = weather_client.fetch_weather(details["latitude"], details["longitude"])
         daily = weather.get("daily", {})
         alerts = []
@@ -76,9 +93,9 @@ def weather_alerts():
             if code >= 95:
                 alerts.append({"date": date, "severity": "HIGH", "hazard": "Thunderstorm", "details": f"Thunderstorm weather code {code} is forecast.", "recommendation": "Avoid exposed outdoor locations and seek sturdy shelter."})
         return jsonify({"success": True, "location": details, "alerts": alerts, "alert_count": len(alerts), "highest_severity": "HIGH" if any(a["severity"] == "HIGH" for a in alerts) else ("MODERATE" if alerts else "NONE")})
-    except Exception as exc:
+    except Exception:
         logger.exception("Weather alert request failed")
-        return jsonify({"error": "Failed to generate alerts", "details": str(exc)}), 500
+        return jsonify({"error": "Failed to generate alerts"}), 502
 
 
 @app.route("/weather/ask", methods=["POST"])
@@ -89,35 +106,48 @@ def weather_ask():
         return jsonify({"error": "Missing or invalid 'query' in request body"}), 400
     query = query.strip()
     if not query:
-        return jsonify({"error": "Query cannot be empty"}), 400
+        return jsonify({"error": "Missing or invalid 'query' in request body"}), 400
+    security = inspect_text(query)
+    if security["suspicious"]:
+        return jsonify({"error": "Query contains a blocked prompt-injection signal"}), 400
     try:
-        top_k = int(body.get("top_k", 5))
-    except (TypeError, ValueError):
-        return jsonify({"error": "'top_k' must be an integer"}), 400
-    top_k = max(1, min(20, top_k))
+        query = validate_user_query(query)
+        top_k = validate_top_k(body.get("top_k", 5))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     try:
         return jsonify(rag_service.answer_weather_question(query=query, top_k=top_k))
-    except Exception as exc:
+    except Exception:
         logger.exception("Weather RAG request failed")
-        return jsonify({"error": "Failed to generate weather answer", "details": str(exc)}), 500
+        return jsonify({"error": "Failed to generate weather answer"}), 502
 
 
 @app.route("/weather/sync", methods=["POST"])
 def weather_sync():
+    if not _sync_authorized():
+        return jsonify({"error": "Weather synchronization is disabled or unauthorized"}), 403
     body = request.get_json(silent=True) or {}
     locations = body.get("locations")
     if not isinstance(locations, list) or not locations:
         return jsonify({"error": "Missing or invalid 'locations' list"}), 400
-    cleaned_locations = [location.strip() for location in locations if isinstance(location, str) and location.strip()]
-    if not cleaned_locations:
-        return jsonify({"error": "No valid locations were provided"}), 400
+    if len(locations) > 50:
+        return jsonify({"error": "A maximum of 50 locations is allowed"}), 400
+    try:
+        cleaned_locations = [_safe_location(location) for location in locations]
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     try:
         lakebase.ensure_weather_tables(embedding_dim=384)
         synced = weather_client.sync_locations(cleaned_locations)
         return jsonify({"status": "success", "synced": synced, "locations": cleaned_locations})
-    except Exception as exc:
+    except Exception:
         logger.exception("Weather synchronization failed")
-        return jsonify({"error": "Weather synchronization failed", "details": str(exc)}), 500
+        return jsonify({"error": "Weather synchronization failed"}), 502
+
+
+@app.errorhandler(413)
+def request_too_large(error):
+    return jsonify({"error": "Request body is too large"}), 413
 
 
 @app.errorhandler(404)
@@ -133,7 +163,7 @@ def method_not_allowed(error):
 @app.errorhandler(Exception)
 def handle_exception(error):
     logger.exception("Unhandled application error")
-    return jsonify({"error": "Internal server error", "details": str(error)}), 500
+    return jsonify({"error": "Internal server error"}), 500
 
 
 if __name__ == "__main__":
