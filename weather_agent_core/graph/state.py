@@ -1,4 +1,4 @@
-"""LangGraph state adapter built around the existing AgentState."""
+"""State carried through the LangGraph workflow."""
 from __future__ import annotations
 from typing import Any, TypedDict
 
@@ -15,6 +15,8 @@ class GraphState(TypedDict, total=False):
     errors: list[str]
     metadata: dict[str, Any]
     messages: list[Any]
+    pending_calls: list[Any]
     next_action: str
     rounds: int
     answer: str
+    runtime: Any
