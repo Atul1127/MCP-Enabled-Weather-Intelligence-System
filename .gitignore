@@ -28,6 +28,7 @@ transformers_cache/
 *.log
 *.sqlite
 *.db
+evaluation/*_report.json
 
 # IDE / OS
 .vscode/
