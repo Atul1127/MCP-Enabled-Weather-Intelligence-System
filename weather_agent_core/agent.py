@@ -19,6 +19,7 @@ from .verifier import EvidenceVerifier
 from .graph.state import GraphState
 from .mcp_registry import MCPCapabilityRegistry
 from .mcp_router import MCPCapabilityRouter
+from .security import inspect_text, validate_observation, validate_tool_arguments
 
 ALLOWED_TOOLS = {"get_weather", "get_forecast", "get_weather_alerts", "assess_weather_risk", "search_weather", "ask_weather"}
 DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
@@ -57,6 +58,8 @@ class WeatherAgent:
     async def run(self, query: str) -> dict[str, Any]:
         query = query.strip()
         if not query: raise ValueError("Query cannot be empty")
+        security = inspect_text(query)
+        if security["suspicious"]: raise ValueError("Query contains a blocked prompt-injection signal")
         trace_id = new_trace_id(); runtime = AgentState(query=query, trace_id=trace_id)
         emit("agent.start", trace_id=trace_id, model=self.model)
         async with connect(trace_id=trace_id) as session:
@@ -69,6 +72,7 @@ class WeatherAgent:
             executor = MCPExecutor(session, registry.allowed_names)
             messages = [types.Content(role="user", parts=[types.Part.from_text(text=query)])]
             active_declarations = declarations
+            structured_response: dict[str, Any] = {}
 
             async def router_node(_: GraphState) -> dict[str, Any]:
                 return {"intent": classify(query), "route": "pending"}
@@ -102,6 +106,8 @@ class WeatherAgent:
             async def executor_node(state: GraphState) -> dict[str, Any]:
                 calls = list(state.get("pending_calls", [])); results = await executor.execute(calls); response_parts = []
                 for function_call, (name, args, result) in zip(calls, results):
+                    validate_tool_arguments(args)
+                    result = validate_observation(result)
                     runtime.add_observation(name, args, result)
                     emit("agent.tool", trace_id=trace_id, tool=name, success=not (isinstance(result, dict) and result.get("success") is False), round=int(state.get("rounds", 0)))
                     response_parts.append(types.Part.from_function_response(name=name, response=result if isinstance(result, dict) else {"result": result}, id=getattr(function_call, "id", None)))
@@ -115,8 +121,10 @@ class WeatherAgent:
                 return {"verification": verification, "retry_count": retry_count, "retry_reason": None if verification["sufficient"] else f"Missing required evidence capabilities: {missing}"}
 
             async def synthesizer_node(state: GraphState) -> dict[str, Any]:
-                answer = await GeminiSynthesizer(self._client_or_raise(), self.model).synthesize(query, runtime)
-                answer, cited_sources = validate_citations(answer, runtime.sources)
+                nonlocal structured_response
+                structured_response = await GeminiSynthesizer(self._client_or_raise(), self.model).synthesize_structured(query, runtime)
+                answer, cited_sources = validate_citations(structured_response["answer"], runtime.sources)
+                structured_response["answer"] = answer
                 if cited_sources: runtime.sources = cited_sources
                 return {"answer": answer}
 
@@ -124,4 +132,4 @@ class WeatherAgent:
             result = await graph.ainvoke({"query": query, "trace_id": trace_id, "rounds": 0, "retry_count": 0})
         success = runtime.required_requirements_satisfied
         emit("agent.end", trace_id=trace_id, intent=runtime.intent, rounds=result.get("rounds", 0), tools=len(runtime.tool_calls), success=success)
-        return {"success": success, "answer": result.get("answer", ""), "trace_id": trace_id, "intent": runtime.intent, "route": runtime.route, "plan": runtime.plan, "tool_calls": runtime.tool_calls, "observations": runtime.observations, "evidence": runtime.evidence_payload(), "sources": runtime.sources, "errors": runtime.errors, "rounds": result.get("rounds", 0), "verification": result.get("verification", {})}
+        return {"success": success, "answer": result.get("answer", ""), "confidence": structured_response.get("confidence"), "citations": structured_response.get("citations", []), "warnings": structured_response.get("warnings", []), "trace_id": trace_id, "intent": runtime.intent, "route": runtime.route, "plan": runtime.plan, "tool_calls": runtime.tool_calls, "observations": runtime.observations, "evidence": runtime.evidence_payload(), "sources": runtime.sources, "errors": runtime.errors, "rounds": result.get("rounds", 0), "verification": result.get("verification", {})}
