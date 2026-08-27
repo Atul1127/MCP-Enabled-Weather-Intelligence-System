@@ -1,4 +1,4 @@
-"""Gemini weather agent orchestrated by LangGraph with MCP capabilities."""
+"""LangGraph-orchestrated Gemini agent with MCP capabilities and unified evidence."""
 from __future__ import annotations
 import asyncio
 import os
@@ -9,10 +9,11 @@ from mcp_client import connect, discover_tools
 from observability import emit, new_trace_id, span
 from rag.citations.validator import validate as validate_citations
 from .executor import MCPExecutor
+from .graph import build_weather_graph
 from .planner import Planner
+from .router import classify
 from .state import AgentState
 from .synthesizer import GeminiSynthesizer
-from .graph import build_weather_graph
 from .graph.state import GraphState
 
 ALLOWED_TOOLS = {"get_weather", "get_forecast", "get_weather_alerts", "assess_weather_risk", "search_weather", "ask_weather"}
@@ -22,11 +23,9 @@ MAX_ROUNDS = max(1, int(os.environ.get("WEATHER_AGENT_MAX_ROUNDS", "4")))
 class WeatherAgent:
     """Application boundary; LangGraph owns orchestration and MCP owns capabilities."""
     def __init__(self, model: str = DEFAULT_MODEL, max_rounds: int = MAX_ROUNDS):
-        if max_rounds < 1:
-            raise ValueError("max_rounds must be at least 1")
+        if max_rounds < 1: raise ValueError("max_rounds must be at least 1")
         self.model, self.max_rounds = model, max_rounds
-        self.planner = Planner()
-        self._client: genai.Client | None = None
+        self.planner = Planner(); self._client: genai.Client | None = None
 
     def _client_or_raise(self) -> genai.Client:
         if self._client is None:
@@ -53,22 +52,23 @@ class WeatherAgent:
         query=query.strip()
         if not query: raise ValueError("Query cannot be empty")
         trace_id=new_trace_id(); runtime=AgentState(query=query,trace_id=trace_id)
-        runtime_plan=self.planner.build(query)
-        runtime.intent=runtime_plan["intent"]; runtime.plan=runtime_plan
-        runtime.required_tool_groups=[set(step["preferred_tools"]) for step in runtime_plan["steps"] if step.get("required",True) or (runtime_plan["requires_knowledge"] and step.get("capability")=="knowledge")]
-        runtime.route="rag" if runtime_plan["requires_knowledge"] and not runtime_plan["requires_live_data"] else "mcp+rag" if runtime_plan["requires_knowledge"] and runtime_plan["requires_live_data"] else "mcp"
-        emit("agent.start",trace_id=trace_id,intent=runtime.intent,route=runtime.route,model=self.model)
+        emit("agent.start",trace_id=trace_id,model=self.model)
         async with connect(trace_id=trace_id) as session:
             declarations=self._declarations(await discover_tools(session))
             if not declarations: raise RuntimeError("MCP server exposed no allowed tools")
-            executor=MCPExecutor(session,ALLOWED_TOOLS)
-            messages=[types.Content(role="user",parts=[types.Part.from_text(text=query)])]
+            executor=MCPExecutor(session,ALLOWED_TOOLS); messages=[types.Content(role="user",parts=[types.Part.from_text(text=query)])]
 
-            async def router_node(state: GraphState) -> dict[str,Any]:
-                return {"intent":runtime.intent,"route":runtime.route,"trace_id":trace_id}
+            async def router_node(_: GraphState) -> dict[str,Any]:
+                # Routing is deterministic and remains separate from planning.
+                return {"intent": classify(query)}
 
             async def planner_node(state: GraphState) -> dict[str,Any]:
-                return {"plan":runtime.plan,"rounds":0}
+                plan=self.planner.build(query)
+                runtime.intent=plan["intent"]; runtime.plan=plan
+                runtime.required_tool_groups=[set(step["preferred_tools"]) for step in plan["steps"] if step.get("required",True) or (plan["requires_knowledge"] and step.get("capability")=="knowledge")]
+                runtime.route="rag" if plan["requires_knowledge"] and not plan["requires_live_data"] else "mcp+rag" if plan["requires_knowledge"] and plan["requires_live_data"] else "mcp"
+                if state.get("intent") and state["intent"] != runtime.intent: raise RuntimeError("Router and planner intent disagree")
+                return {"plan":plan}
 
             async def reasoner_node(state: GraphState) -> dict[str,Any]:
                 round_no=int(state.get("rounds",0))+1
@@ -90,14 +90,14 @@ class WeatherAgent:
                 messages.append(types.Content(role="user",parts=response_parts))
                 return {"observations":runtime.observations,"tool_calls":runtime.tool_calls,"evidence":runtime.evidence_payload(),"sources":runtime.sources,"errors":runtime.errors}
 
-            async def synthesizer_node(state: GraphState) -> dict[str,Any]:
+            async def synthesizer_node(_: GraphState) -> dict[str,Any]:
                 answer=await GeminiSynthesizer(self._client_or_raise(),self.model).synthesize(query,runtime)
                 answer,cited_sources=validate_citations(answer,runtime.sources)
                 if cited_sources: runtime.sources=cited_sources
-                return {"answer":answer,"sources":runtime.sources}
+                return {"answer":answer}
 
             graph=build_weather_graph(router=router_node,planner=planner_node,reasoner=reasoner_node,executor=executor_node,synthesizer=synthesizer_node,max_rounds=self.max_rounds)
-            result=await graph.ainvoke({"query":query,"trace_id":trace_id,"runtime":runtime,"messages":messages,"rounds":0})
+            result=await graph.ainvoke({"query":query,"trace_id":trace_id,"rounds":0})
         success=runtime.required_requirements_satisfied
         emit("agent.end",trace_id=trace_id,intent=runtime.intent,rounds=result.get("rounds",0),tools=len(runtime.tool_calls),success=success)
         return {"success":success,"answer":result.get("answer",""),"trace_id":trace_id,"intent":runtime.intent,"route":runtime.route,"plan":runtime.plan,"tool_calls":runtime.tool_calls,"observations":runtime.observations,"evidence":runtime.evidence_payload(),"sources":runtime.sources,"errors":runtime.errors,"rounds":result.get("rounds",0)}
