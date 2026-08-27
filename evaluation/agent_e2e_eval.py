@@ -35,6 +35,26 @@ def _argument_match(expected: dict[str, Any], actual_calls: list[dict[str, Any]]
     return False
 
 
+def _leaf_exceptions(exc: BaseException) -> list[BaseException]:
+    """Unwrap ExceptionGroup/TaskGroup failures so root causes are visible."""
+    nested = getattr(exc, "exceptions", None)
+    if not nested:
+        return [exc]
+    leaves: list[BaseException] = []
+    for child in nested:
+        leaves.extend(_leaf_exceptions(child))
+    return leaves
+
+
+def _exception_details(exc: BaseException) -> tuple[str, str]:
+    leaves = _leaf_exceptions(exc)
+    primary = leaves[0] if leaves else exc
+    detail = f"{type(primary).__name__}: {primary}"
+    if len(leaves) > 1:
+        detail += f" (+{len(leaves) - 1} nested exception(s))"
+    return type(primary).__name__, detail
+
+
 def evaluate_case(case: dict[str, Any], result: dict[str, Any], latency_ms: float) -> dict[str, Any]:
     successful = _successful_tools(result)
     expected_tools = set(case.get("expected_tools", []))
@@ -76,9 +96,8 @@ async def _run() -> dict[str, Any]:
             error = None
             exception_message = None
         except Exception as exc:  # benchmark must record failures without stopping the suite
-            exception_message = f"{type(exc).__name__}: {exc}"
+            error, exception_message = _exception_details(exc)
             result = {"success": False, "answer": "", "errors": [exception_message]}
-            error = type(exc).__name__
         latency_ms = (time.perf_counter() - started) * 1000
         row = evaluate_case(case, result, latency_ms)
         row["exception"] = error
