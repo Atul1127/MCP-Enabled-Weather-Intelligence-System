@@ -2,11 +2,9 @@
 from __future__ import annotations
 from datetime import datetime
 from typing import Any
+import json
 import lakebase, weather_client
 
-# MCP SDK v2: MCPServer is public from mcp.server. SDK v1: FastMCP is
-# exposed from mcp.server.fastmcp. The fallback keeps an existing local venv
-# usable while requirements.txt pins the supported v2 line for fresh installs.
 try:
     from mcp.server import MCPServer
 except ImportError:
@@ -18,6 +16,55 @@ except ImportError:
 from observability import emit, span
 
 mcp = MCPServer("indian-weather-intelligence")
+
+@mcp.resource("weather://capabilities")
+def weather_capabilities() -> str:
+    """Describe the server's weather capabilities and when to use them."""
+    return json.dumps({
+        "tools": ["get_weather", "get_forecast", "get_weather_alerts", "assess_weather_risk", "search_weather", "ask_weather", "sync_weather", "database_health"],
+        "resources": ["weather://capabilities", "weather://policy", "weather://forecast/{location}/{date}"],
+        "prompts": ["weather_analysis", "compare_weather", "activity_risk"],
+        "principles": {
+            "live_data": "Use weather tools for current or forecast observations.",
+            "knowledge": "Use search_weather/ask_weather for grounded weather knowledge.",
+            "resources": "Use resources for read-only contextual data.",
+            "prompts": "Use prompts as reusable interaction templates; generation remains in the host agent."
+        }
+    }, ensure_ascii=False)
+
+@mcp.resource("weather://policy")
+def weather_policy() -> str:
+    """Expose safety and grounding policy for host agents."""
+    return json.dumps({
+        "grounding": ["Never invent live weather values.", "Prefer MCP observations for current and forecast facts.", "Use RAG evidence for static weather knowledge."],
+        "safety": ["Risk assessments are advisory, not official warnings.", "Official government alerts take precedence over application-level hazard detection."],
+        "citations": ["Preserve source identifiers returned by MCP and RAG.", "Do not present unsupported claims as observed facts."]
+    }, ensure_ascii=False)
+
+@mcp.resource("weather://forecast/{location}/{date}")
+def weather_forecast_resource(location: str, date: str = "tomorrow") -> str:
+    """Read a forecast snapshot as a resource without invoking a model tool."""
+    details = weather_client.geocode_location_details(location.strip())
+    if not details:
+        return json.dumps({"success": False, "error": f"Could not resolve location: {location}"})
+    weather = weather_client.fetch_weather(details["latitude"], details["longitude"])
+    target = _target_date(date, weather.get("daily", {}))
+    return json.dumps({"success": True, "location": details, "forecast": _daily_summary(weather, target), "source": "open-meteo"}, ensure_ascii=False)
+
+@mcp.prompt()
+def weather_analysis(query: str, evidence: str = "") -> str:
+    """Create a grounded weather-analysis instruction for the host agent."""
+    return f"Analyze this weather question using only the supplied evidence. Separate live observations from general knowledge, state uncertainty, and avoid inventing values.\n\nQUESTION:\n{query}\n\nEVIDENCE:\n{evidence}" 
+
+@mcp.prompt()
+def compare_weather(location_a: str, location_b: str, date: str = "tomorrow") -> str:
+    """Create a structured comparison prompt for two locations."""
+    return f"Compare {location_a} and {location_b} for {date}. Compare temperature, precipitation, wind, hazards, and practical implications. Use only retrieved MCP/RAG evidence and cite sources." 
+
+@mcp.prompt()
+def activity_risk(location: str, activity: str, date: str = "tomorrow") -> str:
+    """Create a reusable activity-risk analysis prompt."""
+    return f"Assess the weather risk for {activity} in {location} on {date}. Use live forecast evidence, identify hazards, give a cautious recommendation, and distinguish advisory assessment from official warnings." 
 
 def _target_date(value: str | None, daily: dict[str, Any]) -> str:
     dates = daily.get("time") or []
@@ -112,8 +159,6 @@ def search_weather(query: str, top_k: int = 5, location: str | None = None, stat
     """Search weather knowledge through the modular RAG pipeline."""
     query = query.strip() if query else ""
     if not query: return {"success": False, "error": "query cannot be empty"}
-    # Keep RAG's native ML dependencies out of MCP startup/tool discovery.
-    # They are imported only when a RAG search is actually requested.
     from rag.pipeline import RAGPipeline
     with span("mcp.search_weather", trace_id="unknown", tool="search_weather") as info:
         result = RAGPipeline().retrieve(query, location=location, state=state, top_k=top_k); payload = {"success": True, "query": query, "intent": result.plan.intent, "documents": result.documents, "context": result.context, "sources": result.sources}; info["success"] = True; info["documents"] = len(result.documents); info["sources"] = len(result.sources); emit("mcp.tool.result", trace_id="unknown", tool="search_weather", success=True, documents=len(result.documents), sources=len(result.sources)); return payload
