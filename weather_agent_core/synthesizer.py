@@ -5,6 +5,9 @@ import asyncio
 import json
 from typing import Any
 
+from google import genai
+from google.genai import types
+
 from llm_provider import generate_structured
 
 SYSTEM_PROMPT = """You are the final answer synthesizer for an Indian Weather Intelligence system.
@@ -31,12 +34,28 @@ RESPONSE_SCHEMA = {
 
 
 class GeminiSynthesizer:
-    """Synthesize through the shared Gemini provider."""
+    """Synthesize through the shared Gemini provider.
+
+    A client may be injected for deterministic unit tests. Production callers leave it
+    unset, which routes through the shared provider and its retry/fallback policy.
+    """
 
     def __init__(self, client: Any = None, model: str | None = None):
-        # Arguments are retained for backwards compatibility with existing callers/tests.
         self.client = client
         self.model = model
+
+    def _generate_with_injected_client(self, prompt: str) -> str:
+        response = self.client.models.generate_content(
+            model=self.model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                response_mime_type="application/json",
+                response_schema=RESPONSE_SCHEMA,
+                temperature=0.0,
+            ),
+        )
+        return response.text
 
     async def synthesize_structured(self, query: str, state: Any) -> dict[str, Any]:
         payload = {
@@ -52,14 +71,22 @@ class GeminiSynthesizer:
             + json.dumps(payload, default=str)
             + "\n</untrusted_evidence>"
         )
-        text = await asyncio.to_thread(
-            generate_structured,
-            prompt,
-            system_instruction=SYSTEM_PROMPT,
-            response_schema=RESPONSE_SCHEMA,
-            temperature=0.0,
-            model=self.model,
-        )
+
+        if self.client is not None:
+            text = await asyncio.to_thread(
+                self._generate_with_injected_client,
+                prompt,
+            )
+        else:
+            text = await asyncio.to_thread(
+                generate_structured,
+                prompt,
+                system_instruction=SYSTEM_PROMPT,
+                response_schema=RESPONSE_SCHEMA,
+                temperature=0.0,
+                model=self.model,
+            )
+
         try:
             result = json.loads(text)
         except json.JSONDecodeError as exc:
