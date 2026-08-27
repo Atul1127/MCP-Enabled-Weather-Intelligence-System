@@ -1,5 +1,6 @@
 """Deterministic metrics for end-to-end agent runs."""
 from __future__ import annotations
+
 from typing import Any
 
 
@@ -13,7 +14,8 @@ def evaluate_run(result: dict[str, Any], *, expected_tools: set[str] | None = No
     citations = result.get("sources") or result.get("citations") or []
     return {
         "success": bool(result.get("answer")) and not result.get("errors"),
-        "grounded": bool(verification.get("sufficient")) and (bool(evidence) if expected else True),
+        # This is an evidence-sufficiency proxy, not an LLM faithfulness score.
+        "evidence_sufficient": bool(verification.get("sufficient")) and (bool(evidence) if expected else True),
         "citation_present": bool(citations) if evidence else True,
         "tool_selection_recall": round(tool_recall, 4) if tool_recall is not None else None,
         "tool_calls": len(observations),
@@ -26,14 +28,16 @@ def aggregate(results: list[dict[str, Any]]) -> dict[str, Any]:
     if not results:
         return {"cases": 0}
     metrics = [evaluate_run(item, expected_tools=item.get("expected_tools")) for item in results]
+
     def rate(key: str) -> float:
         values = [m[key] for m in metrics if m[key] is not None]
         return round(sum(bool(v) for v in values) / len(values), 4) if values else 0.0
+
     recalls = [m["tool_selection_recall"] for m in metrics if m["tool_selection_recall"] is not None]
     return {
         "cases": len(results),
         "success_rate": rate("success"),
-        "grounded_rate": rate("grounded"),
+        "evidence_sufficiency_rate": rate("evidence_sufficient"),
         "citation_rate": rate("citation_present"),
         "mean_tool_selection_recall": round(sum(recalls) / len(recalls), 4) if recalls else None,
         "mean_tool_calls": round(sum(m["tool_calls"] for m in metrics) / len(metrics), 3),
