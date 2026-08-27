@@ -2,6 +2,7 @@ import pytest
 
 from evaluation.retrieval_metrics import (
     evaluate_ranked_documents,
+    evaluate_relevant_documents,
     ndcg_at_k,
     precision_at_k,
     reciprocal_rank,
@@ -32,3 +33,18 @@ def test_evaluate_ranked_documents_reports_topic_metrics():
     assert metrics["topic_recall_at_1"] == 0.0
     assert metrics["topic_recall_at_2"] == 1.0
     assert metrics["mrr"] == pytest.approx(0.5)
+
+
+def test_document_metrics_use_ground_truth_denominator():
+    docs = [{"id": "a"}, {"id": "noise"}, {"id": "b"}]
+    metrics = evaluate_relevant_documents(docs, ["a", "b"], (1, 3))
+    assert metrics["recall_at_1"] == pytest.approx(0.5)
+    assert metrics["recall_at_3"] == pytest.approx(1.0)
+    assert metrics["precision_at_3"] == pytest.approx(2 / 3)
+    assert metrics["mrr"] == pytest.approx(1.0)
+
+
+def test_document_metrics_ignore_duplicate_ranked_ids():
+    docs = [{"id": "a"}, {"id": "a"}, {"id": "noise"}]
+    metrics = evaluate_relevant_documents(docs, ["a", "b"], (1, 3))
+    assert metrics["recall_at_3"] == pytest.approx(0.5)
