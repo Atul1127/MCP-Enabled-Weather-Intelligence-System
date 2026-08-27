@@ -24,6 +24,26 @@ def test_denied_tool_never_calls_mcp(monkeypatch):
     assert result[0][2]["error_type"] == "policy_denied"
 
 
+def test_invalid_arguments_never_call_mcp(monkeypatch):
+    async def unexpected(*args, **kwargs):
+        raise AssertionError("MCP should not be called")
+
+    monkeypatch.setattr(executor_module, "call_tool", unexpected)
+    result = asyncio.run(
+        MCPExecutor(Session(), {"weather"}).execute([call("weather", {"query": "x" * 10001})])
+    )
+    assert result[0][2]["error_type"] == "validation_error"
+
+
+def test_oversized_nested_result_is_rejected(monkeypatch):
+    async def oversized(*args, **kwargs):
+        return {"success": True, "payload": "x" * 50001}
+
+    monkeypatch.setattr(executor_module, "call_tool", oversized)
+    result = asyncio.run(MCPExecutor(Session(), {"weather"}, max_retries=0).execute([call("weather")]))
+    assert result[0][2]["error_type"] == "validation_error"
+
+
 def test_timeout_is_normalized(monkeypatch):
     async def slow(*args, **kwargs):
         await asyncio.sleep(0.05)
