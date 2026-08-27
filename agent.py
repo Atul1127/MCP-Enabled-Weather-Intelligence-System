@@ -1,14 +1,17 @@
-"""CLI entry point for the layered Gemini weather agent.
-
-The implementation lives in weather_agent_core so orchestration concerns are
-separated from the executable entry point.
-"""
+"""CLI entry point for the layered Gemini weather agent."""
 from __future__ import annotations
-
 import argparse
 import asyncio
-
+import re
 from weather_agent_core import WeatherAgent
+
+
+def _is_comparison_query(query: str) -> bool:
+    """Compatibility predicate used by benchmarks and the CLI contract."""
+    text = " ".join((query or "").lower().split())
+    if any(marker in text for marker in ("compare ", "comparison", "versus", " vs ", "which is better", "better for")):
+        return True
+    return bool(re.search(r"\b(?:between|or)\b.+\b(?:and|or)\b", text))
 
 
 def main() -> None:
