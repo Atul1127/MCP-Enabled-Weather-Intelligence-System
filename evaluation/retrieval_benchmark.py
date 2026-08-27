@@ -1,11 +1,5 @@
-"""Stage-by-stage benchmark for the local weather retrieval stack.
-
-Compares dense, BM25, hybrid RRF, cross-encoder reranking, and MMR. Each case
-has a canonical gold document ID, so Hit@K/MRR/nDCG are document-level metrics.
-Gemini is not called by this benchmark.
-"""
+"""Stage-by-stage benchmark for the local weather retrieval stack."""
 from __future__ import annotations
-
 import json
 import math
 import statistics
@@ -62,18 +56,22 @@ def _timed(fn):
 
 def benchmark_cases(cases: list[dict[str, Any]], store: Any) -> dict[str, Any]:
     stage_rows: dict[str, list[dict[str, Any]]] = {stage: [] for stage in STAGES}
-
     for case in cases:
         query = case["question"]
         gold = str(case["gold_source"])
         allowed = store.filtered_rows()
-
         dense, dense_ms = _timed(lambda: dense_search(store, query, CANDIDATE_K, allowed))
         sparse, sparse_ms = _timed(lambda: sparse_search(store, query, CANDIDATE_K, allowed))
         hybrid, hybrid_ms = _timed(lambda: fuse(dense, sparse, CANDIDATE_K))
         reranked, rerank_ms = _timed(lambda: rerank(query, hybrid, CANDIDATE_K))
         mmr, mmr_ms = _timed(lambda: select_mmr(reranked, FINAL_K, lambda_mult=0.75))
-
+        cumulative = {
+            "dense": dense_ms,
+            "bm25": dense_ms + sparse_ms,
+            "hybrid": dense_ms + sparse_ms + hybrid_ms,
+            "reranked": dense_ms + sparse_ms + hybrid_ms + rerank_ms,
+            "reranked_mmr": dense_ms + sparse_ms + hybrid_ms + rerank_ms + mmr_ms,
+        }
         results = {
             "dense": (dense[:FINAL_K], dense_ms),
             "bm25": (sparse[:FINAL_K], sparse_ms),
@@ -81,34 +79,39 @@ def benchmark_cases(cases: list[dict[str, Any]], store: Any) -> dict[str, Any]:
             "reranked": (reranked[:FINAL_K], rerank_ms),
             "reranked_mmr": (mmr, mmr_ms),
         }
-        for stage, (documents, latency_ms) in results.items():
+        for stage, (documents, isolated_ms) in results.items():
             stage_rows[stage].append({
                 "id": case["id"],
                 "category": case["category"],
                 "gold_source": gold,
-                "latency_ms": round(latency_ms, 3),
+                "latency_ms": round(isolated_ms, 3),
+                "cumulative_latency_ms": round(cumulative[stage], 3),
                 **_metrics(documents, gold),
             })
 
     summary: dict[str, dict[str, float | int]] = {}
     for stage, rows in stage_rows.items():
-        latencies = [row["latency_ms"] for row in rows]
+        isolated = [row["latency_ms"] for row in rows]
+        cumulative = [row["cumulative_latency_ms"] for row in rows]
         summary[stage] = {
             "cases": len(rows),
             "hit_at_1": round(statistics.mean(r["hit_at_1"] for r in rows), 4),
             "hit_at_5": round(statistics.mean(r["hit_at_5"] for r in rows), 4),
             "mrr": round(statistics.mean(r["mrr"] for r in rows), 4),
             "ndcg_at_5": round(statistics.mean(r["ndcg_at_5"] for r in rows), 4),
-            "mean_latency_ms": round(statistics.mean(latencies), 3) if latencies else 0.0,
-            "p50_latency_ms": round(statistics.median(latencies), 3) if latencies else 0.0,
-            "p95_latency_ms": round(percentile(latencies, 0.95), 3),
+            "mean_latency_ms": round(statistics.mean(isolated), 3),
+            "p50_latency_ms": round(statistics.median(isolated), 3),
+            "p95_latency_ms": round(percentile(isolated, 0.95), 3),
+            "mean_cumulative_latency_ms": round(statistics.mean(cumulative), 3),
+            "p50_cumulative_latency_ms": round(statistics.median(cumulative), 3),
+            "p95_cumulative_latency_ms": round(percentile(cumulative, 0.95), 3),
         }
-
     return {
         "dataset": DATASET.name,
         "candidate_k": CANDIDATE_K,
         "final_k": FINAL_K,
         "metric_definition": "One canonical gold document per case; hit@K is document recall@K.",
+        "latency_definition": "latency_ms is isolated stage cost; cumulative_latency_ms is end-to-end cost through that stage.",
         "summary": summary,
         "rows": stage_rows,
     }
