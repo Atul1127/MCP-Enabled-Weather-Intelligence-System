@@ -1,6 +1,6 @@
-# Gemini Agent + Modular RAG
+# Gemini Agent + LangGraph + Modular RAG
 
-The main branch is a Gemini-only, MCP-first weather intelligence system with a modular local RAG stack.
+The main branch is a Gemini-only, MCP-first weather intelligence system with LangGraph orchestration and a modular local RAG stack.
 
 ## Architecture
 
@@ -8,41 +8,51 @@ The main branch is a Gemini-only, MCP-first weather intelligence system with a m
 User
   |
   v
-Gemini WeatherAgent
+LangGraph WeatherAgent
   |
-  +--> Router / Planner
+  +--> Router -> Planner -> Decomposer
   |
-  +--> MCP Executor
-         |
-         +--> live weather
-         +--> forecast
-         +--> hazard detection
-         +--> activity risk
-         +--> weather knowledge retrieval
-                    |
-                    v
-               RAGPipeline
-                    |
-                    +--> query analysis
-                    +--> query expansion
-                    +--> metadata filtering
-                    +--> dense retrieval
-                    +--> BM25
-                    +--> confidence-aware RRF
-                    +--> cross-encoder reranking
-                    +--> context compression
-                    |
-                    v
-              Unified Evidence
-                    |
-                    v
-             Gemini Synthesizer
-                    |
-                    v
-             citation-aware answer
+  +--> Reasoner <---- bounded recovery ---- Verifier
+  |       |
+  |       +--> MCP Executor
+  |              |
+  |              +--> live weather
+  |              +--> forecast
+  |              +--> hazard detection
+  |              +--> activity risk
+  |              +--> weather knowledge retrieval
+  |                         |
+  |                         v
+  |                    RAGPipeline
+  |                         |
+  |                         +--> query analysis
+  |                         +--> query expansion
+  |                         +--> metadata filtering
+  |                         +--> dense retrieval
+  |                         +--> BM25
+  |                         +--> confidence-aware RRF
+  |                         +--> cross-encoder reranking
+  |                         +--> context compression
+  |                         |
+  |                         v
+  +-------------------- Unified Evidence
+                              |
+                              v
+                       Gemini Synthesizer
+                              |
+                     structured response
+                              |
+                     citation validation
+                              |
+                              v
+                            Answer
 ```
 
-The MCP server is the capability boundary. The agent owns reasoning and orchestration. RAG owns retrieval and evidence preparation. The final Gemini synthesizer combines live MCP evidence with RAG evidence.
+The MCP server is the capability boundary. LangGraph owns reasoning and orchestration. RAG owns retrieval and evidence preparation. The final Gemini synthesizer combines live MCP evidence with RAG evidence and returns a validated structured contract.
+
+## Security boundary
+
+Tool arguments are validated before MCP execution, and untrusted MCP results are bounded by type, size, and nesting checks. The agent also applies deterministic prompt-injection signal checks at the user-input boundary. These checks are defense-in-depth; they are not a complete prompt-injection solution.
 
 ## Local RAG backend
 
@@ -77,7 +87,7 @@ python evaluation/rag_llm_eval.py
 python evaluation/agent_benchmark.py
 ```
 
-The evaluation stack measures retrieval quality, tool-selection accuracy, argument accuracy, latency, evidence relevance, faithfulness, and citation behavior.
+The evaluation stack measures retrieval quality, tool-selection accuracy, argument accuracy, latency, evidence sufficiency, and citation behavior. Retrieval/LLM evaluation separately covers answer-quality dimensions where applicable.
 
 ## Observability
 
