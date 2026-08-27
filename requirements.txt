@@ -16,7 +16,8 @@ rank-bm25>=0.2.2
 # MCP v2: current stable SDK line.
 mcp[cli]>=2.0.0,<3.0
 
-# Agent orchestration.
-langgraph>=0.6.0,<1.0
+# LangGraph 1.x uses the current checkpoint serializer policy and avoids the
+# deprecated allowed_objects default used by older 0.x releases.
+langgraph>=1.2.11,<2.0
 
 pytest>=8.0.0
