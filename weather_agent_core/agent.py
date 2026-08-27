@@ -1,4 +1,4 @@
-"""Stateful Gemini agent: Router -> Planner -> Reasoner -> MCP Executor -> Synthesizer."""
+"""Gemini weather agent orchestrated by LangGraph with MCP capabilities."""
 from __future__ import annotations
 import asyncio
 import os
@@ -12,94 +12,92 @@ from .executor import MCPExecutor
 from .planner import Planner
 from .state import AgentState
 from .synthesizer import GeminiSynthesizer
+from .graph import build_weather_graph
+from .graph.state import GraphState
 
 ALLOWED_TOOLS = {"get_weather", "get_forecast", "get_weather_alerts", "assess_weather_risk", "search_weather", "ask_weather"}
 DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
 MAX_ROUNDS = max(1, int(os.environ.get("WEATHER_AGENT_MAX_ROUNDS", "4")))
 
 class WeatherAgent:
-    """Application orchestration boundary; capabilities remain behind MCP."""
+    """Application boundary; LangGraph owns orchestration and MCP owns capabilities."""
     def __init__(self, model: str = DEFAULT_MODEL, max_rounds: int = MAX_ROUNDS):
         if max_rounds < 1:
             raise ValueError("max_rounds must be at least 1")
-        self.model = model
-        self.max_rounds = max_rounds
+        self.model, self.max_rounds = model, max_rounds
         self.planner = Planner()
         self._client: genai.Client | None = None
 
     def _client_or_raise(self) -> genai.Client:
         if self._client is None:
             key = os.environ.get("GEMINI_API_KEY")
-            if not key:
-                raise RuntimeError("GEMINI_API_KEY is not set in the process environment")
+            if not key: raise RuntimeError("GEMINI_API_KEY is not set in the process environment")
             self._client = genai.Client(api_key=key)
         return self._client
 
     @staticmethod
     def _declarations(discovered: list[dict[str, Any]]) -> list[types.FunctionDeclaration]:
-        declarations = []
+        declarations=[]
         for tool in discovered:
-            function = tool.get("function", {})
-            name = function.get("name")
-            if name not in ALLOWED_TOOLS:
-                continue
-            declarations.append(types.FunctionDeclaration(name=name, description=function.get("description", ""), parameters=function.get("parameters") or {"type": "object", "properties": {}}))
+            function=tool.get("function", {}); name=function.get("name")
+            if name in ALLOWED_TOOLS:
+                declarations.append(types.FunctionDeclaration(name=name, description=function.get("description", ""), parameters=function.get("parameters") or {"type":"object","properties":{}}))
         return declarations
 
-    async def _reason(self, contents: list[types.Content], declarations: list[types.FunctionDeclaration], plan: dict[str, Any]):
-        config_kwargs: dict[str, Any] = {
-            "system_instruction": "You are the execution-selection layer. Follow the explicit plan. Use MCP tools for live evidence and weather knowledge. Complete every required plan step before stopping. Gather every required location for comparisons. Never invent live values.\n\nPLAN:\n" + str(plan),
-            "max_output_tokens": 700,
-            "tools": [types.Tool(function_declarations=declarations)],
-            "automatic_function_calling": types.AutomaticFunctionCallingConfig(disable=True),
-        }
-        if not self.model.startswith(("gemini-3.5", "gemini-3.6", "gemini-3.7")):
-            config_kwargs["temperature"] = 0
-        config = types.GenerateContentConfig(**config_kwargs)
-        return await asyncio.to_thread(self._client_or_raise().models.generate_content, model=self.model, contents=contents, config=config)
+    async def _reason(self, messages: list[types.Content], declarations: list[types.FunctionDeclaration], plan: dict[str, Any]):
+        kwargs: dict[str, Any]={"system_instruction":"You are the execution-selection layer. Follow the explicit plan. Use MCP tools for live evidence and weather knowledge. Complete every required plan step before stopping. Gather every required location for comparisons. Never invent live values.\n\nPLAN:\n"+str(plan),"max_output_tokens":700,"tools":[types.Tool(function_declarations=declarations)],"automatic_function_calling":types.AutomaticFunctionCallingConfig(disable=True)}
+        if not self.model.startswith(("gemini-3.5","gemini-3.6","gemini-3.7")): kwargs["temperature"]=0
+        return await asyncio.to_thread(self._client_or_raise().models.generate_content,model=self.model,contents=messages,config=types.GenerateContentConfig(**kwargs))
 
     async def run(self, query: str) -> dict[str, Any]:
-        query = query.strip()
-        if not query:
-            raise ValueError("Query cannot be empty")
-        trace_id = new_trace_id()
-        state = AgentState(query=query, trace_id=trace_id)
-        plan = self.planner.build(query)
-        state.intent = plan["intent"]
-        state.plan = plan
-        state.required_tool_groups = [set(step["preferred_tools"]) for step in plan["steps"] if step.get("required", True) or (plan["requires_knowledge"] and step.get("capability") == "knowledge")]
-        state.route = "rag" if plan["requires_knowledge"] and not plan["requires_live_data"] else "mcp+rag" if plan["requires_knowledge"] and plan["requires_live_data"] else "mcp"
-        emit("agent.start", trace_id=trace_id, intent=state.intent, route=state.route, model=self.model)
-        rounds_used = 0
+        query=query.strip()
+        if not query: raise ValueError("Query cannot be empty")
+        trace_id=new_trace_id(); runtime=AgentState(query=query,trace_id=trace_id)
+        runtime_plan=self.planner.build(query)
+        runtime.intent=runtime_plan["intent"]; runtime.plan=runtime_plan
+        runtime.required_tool_groups=[set(step["preferred_tools"]) for step in runtime_plan["steps"] if step.get("required",True) or (runtime_plan["requires_knowledge"] and step.get("capability")=="knowledge")]
+        runtime.route="rag" if runtime_plan["requires_knowledge"] and not runtime_plan["requires_live_data"] else "mcp+rag" if runtime_plan["requires_knowledge"] and runtime_plan["requires_live_data"] else "mcp"
+        emit("agent.start",trace_id=trace_id,intent=runtime.intent,route=runtime.route,model=self.model)
         async with connect(trace_id=trace_id) as session:
-            declarations = self._declarations(await discover_tools(session))
-            if not declarations:
-                raise RuntimeError("MCP server exposed no allowed tools")
-            executor = MCPExecutor(session, ALLOWED_TOOLS)
-            contents: list[types.Content] = [types.Content(role="user", parts=[types.Part.from_text(text=query)])]
-            for round_no in range(1, self.max_rounds + 1):
-                rounds_used = round_no
-                with span("agent.reason", trace_id=trace_id, round=round_no) as info:
-                    response = await self._reason(contents, declarations, plan)
-                    calls = list(response.function_calls or [])
-                    info.update(tool_calls=len(calls), model=self.model)
-                candidate = response.candidates[0] if response.candidates else None
-                if candidate is None or candidate.content is None:
-                    raise RuntimeError("Gemini returned no candidate content")
-                if not calls:
-                    break
-                contents.append(candidate.content)
-                results = await executor.execute(calls)
-                response_parts = []
-                for function_call, (name, args, result) in zip(calls, results):
-                    state.add_observation(name, args, result)
-                    emit("agent.tool", trace_id=trace_id, tool=name, success=not (isinstance(result, dict) and result.get("success") is False), round=round_no)
-                    response_parts.append(types.Part.from_function_response(name=name, response=result if isinstance(result, dict) else {"result": result}, id=getattr(function_call, "id", None)))
-                contents.append(types.Content(role="user", parts=response_parts))
-        answer = await GeminiSynthesizer(self._client_or_raise(), self.model).synthesize(query, state)
-        answer, cited_sources = validate_citations(answer, state.sources)
-        if cited_sources:
-            state.sources = cited_sources
-        success = state.required_requirements_satisfied
-        emit("agent.end", trace_id=trace_id, intent=state.intent, rounds=rounds_used, tools=len(state.tool_calls), success=success)
-        return {"success": success, "answer": answer, "trace_id": trace_id, "intent": state.intent, "route": state.route, "plan": state.plan, "tool_calls": state.tool_calls, "observations": state.observations, "evidence": state.evidence_payload(), "sources": state.sources, "errors": state.errors, "rounds": rounds_used}
+            declarations=self._declarations(await discover_tools(session))
+            if not declarations: raise RuntimeError("MCP server exposed no allowed tools")
+            executor=MCPExecutor(session,ALLOWED_TOOLS)
+            messages=[types.Content(role="user",parts=[types.Part.from_text(text=query)])]
+
+            async def router_node(state: GraphState) -> dict[str,Any]:
+                return {"intent":runtime.intent,"route":runtime.route,"trace_id":trace_id}
+
+            async def planner_node(state: GraphState) -> dict[str,Any]:
+                return {"plan":runtime.plan,"rounds":0}
+
+            async def reasoner_node(state: GraphState) -> dict[str,Any]:
+                round_no=int(state.get("rounds",0))+1
+                with span("agent.reason",trace_id=trace_id,round=round_no) as info:
+                    response=await self._reason(messages,declarations,runtime.plan)
+                    calls=list(response.function_calls or []); info.update(tool_calls=len(calls),model=self.model)
+                candidate=response.candidates[0] if response.candidates else None
+                if candidate is None or candidate.content is None: raise RuntimeError("Gemini returned no candidate content")
+                if not calls: return {"next_action":"finish","rounds":round_no}
+                messages.append(candidate.content)
+                return {"next_action":"tool","pending_calls":calls,"rounds":round_no}
+
+            async def executor_node(state: GraphState) -> dict[str,Any]:
+                calls=list(state.get("pending_calls",[])); results=await executor.execute(calls); response_parts=[]
+                for function_call,(name,args,result) in zip(calls,results):
+                    runtime.add_observation(name,args,result)
+                    emit("agent.tool",trace_id=trace_id,tool=name,success=not(isinstance(result,dict) and result.get("success") is False),round=int(state.get("rounds",0)))
+                    response_parts.append(types.Part.from_function_response(name=name,response=result if isinstance(result,dict) else {"result":result},id=getattr(function_call,"id",None)))
+                messages.append(types.Content(role="user",parts=response_parts))
+                return {"observations":runtime.observations,"tool_calls":runtime.tool_calls,"evidence":runtime.evidence_payload(),"sources":runtime.sources,"errors":runtime.errors}
+
+            async def synthesizer_node(state: GraphState) -> dict[str,Any]:
+                answer=await GeminiSynthesizer(self._client_or_raise(),self.model).synthesize(query,runtime)
+                answer,cited_sources=validate_citations(answer,runtime.sources)
+                if cited_sources: runtime.sources=cited_sources
+                return {"answer":answer,"sources":runtime.sources}
+
+            graph=build_weather_graph(router=router_node,planner=planner_node,reasoner=reasoner_node,executor=executor_node,synthesizer=synthesizer_node,max_rounds=self.max_rounds)
+            result=await graph.ainvoke({"query":query,"trace_id":trace_id,"runtime":runtime,"messages":messages,"rounds":0})
+        success=runtime.required_requirements_satisfied
+        emit("agent.end",trace_id=trace_id,intent=runtime.intent,rounds=result.get("rounds",0),tools=len(runtime.tool_calls),success=success)
+        return {"success":success,"answer":result.get("answer",""),"trace_id":trace_id,"intent":runtime.intent,"route":runtime.route,"plan":runtime.plan,"tool_calls":runtime.tool_calls,"observations":runtime.observations,"evidence":runtime.evidence_payload(),"sources":runtime.sources,"errors":runtime.errors,"rounds":result.get("rounds",0)}
