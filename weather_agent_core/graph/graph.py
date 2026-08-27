@@ -6,17 +6,26 @@ from .state import GraphState
 Node = Callable[[GraphState], Awaitable[dict[str, Any]]]
 
 
+async def _default_verifier(_: GraphState) -> dict[str, Any]:
+    """Compatibility verifier for callers that do not need verification."""
+    return {"verification": {"sufficient": True, "reason": "verification not configured"}}
+
+
 def build_weather_graph(
     *, router: Node, planner: Node, reasoner: Node, executor: Node,
-    verifier: Node, synthesizer: Node, max_rounds: int = 4, max_retries: int = 1,
+    synthesizer: Node, verifier: Node | None = None,
+    max_rounds: int = 4, max_retries: int = 1,
 ):
     """Compile Router -> Planner -> Reasoner <-> MCP -> Verify -> Synthesize.
 
-    Verification can send the graph back through the reasoner for one bounded
-    corrective retrieval cycle; this prevents uncontrolled agent loops.
+    ``verifier`` is optional for backwards compatibility with lightweight
+    graph callers/tests. Production agents should always provide the real
+    verifier so insufficient evidence can trigger bounded recovery.
     """
     if max_rounds < 1 or max_retries < 0:
         raise ValueError("max_rounds must be >= 1 and max_retries must be >= 0")
+    if verifier is None:
+        verifier = _default_verifier
     try:
         from langgraph.graph import END, START, StateGraph
     except ImportError as exc:
