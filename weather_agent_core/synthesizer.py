@@ -5,7 +5,6 @@ import asyncio
 import json
 from typing import Any
 
-from google.genai import types
 from llm_provider import generate_structured
 
 SYSTEM_PROMPT = """You are the final answer synthesizer for an Indian Weather Intelligence system.
@@ -59,6 +58,7 @@ class GeminiSynthesizer:
             system_instruction=SYSTEM_PROMPT,
             response_schema=RESPONSE_SCHEMA,
             temperature=0.0,
+            model=self.model,
         )
         try:
             result = json.loads(text)
