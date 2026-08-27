@@ -28,16 +28,18 @@ class GeminiSynthesizer:
             "errors": state.errors,
         }
         prompt = f"User question:\n{query}\n\nUnified evidence:\n{json.dumps(payload, default=str)}"
+        config_kwargs: dict[str, Any] = {
+            "system_instruction": SYSTEM_PROMPT,
+            "max_output_tokens": 900,
+            "automatic_function_calling": types.AutomaticFunctionCallingConfig(disable=True),
+        }
+        if not self.model.startswith(("gemini-3.5", "gemini-3.6", "gemini-3.7")):
+            config_kwargs["temperature"] = 0
         response = await asyncio.to_thread(
             self.client.models.generate_content,
             model=self.model,
             contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                temperature=0,
-                max_output_tokens=900,
-                automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-            ),
+            config=types.GenerateContentConfig(**config_kwargs),
         )
         text = (response.text or "").strip()
         if not text:
