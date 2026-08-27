@@ -5,6 +5,7 @@ import asyncio
 import json
 import statistics
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -73,15 +74,33 @@ async def _run() -> dict[str, Any]:
         try:
             result = await agent.run(case["question"])
             error = None
+            exception_message = None
         except Exception as exc:  # benchmark must record failures without stopping the suite
-            result = {"success": False, "answer": "", "errors": [type(exc).__name__ + ": " + str(exc)]}
+            exception_message = f"{type(exc).__name__}: {exc}"
+            result = {"success": False, "answer": "", "errors": [exception_message]}
             error = type(exc).__name__
         latency_ms = (time.perf_counter() - started) * 1000
         row = evaluate_case(case, result, latency_ms)
         row["exception"] = error
+        row["exception_message"] = exception_message
         rows.append(row)
 
     latencies = sorted(row["latency_ms"] for row in rows)
+    exception_counts = Counter(row["exception"] for row in rows if row["exception"])
+    first_failure = next(
+        ({"id": row["id"], "exception": row["exception_message"]} for row in rows if row["exception_message"]),
+        None,
+    )
+    category_summary: dict[str, dict[str, float | int]] = {}
+    for category in sorted({str(row["category"]) for row in rows}):
+        group = [row for row in rows if row["category"] == category]
+        category_summary[category] = {
+            "cases": len(group),
+            "success_rate": round(sum(row["success"] for row in group) / len(group), 4),
+            "tool_selection_recall": round(statistics.mean(row["tool_selection_recall"] for row in group), 4),
+            "evidence_sufficiency_rate": round(sum(row["evidence_sufficient"] for row in group) / len(group), 4),
+        }
+
     summary = {
         "cases": len(rows),
         "task_success_rate": round(sum(row["success"] for row in rows) / len(rows), 4) if rows else 0.0,
@@ -90,6 +109,9 @@ async def _run() -> dict[str, Any]:
         "mean_argument_accuracy": _mean(rows, "argument_accuracy"),
         "evidence_sufficiency_rate": round(sum(row["evidence_sufficient"] for row in rows) / len(rows), 4) if rows else 0.0,
         "error_rate": round(sum(row["error_count"] > 0 or row["exception"] is not None for row in rows) / len(rows), 4) if rows else 0.0,
+        "exception_counts": dict(exception_counts),
+        "first_failure": first_failure,
+        "category_summary": category_summary,
         "mean_latency_ms": round(statistics.mean(latencies), 2) if latencies else 0.0,
         "p50_latency_ms": round(statistics.median(latencies), 2) if latencies else 0.0,
         "p95_latency_ms": round(latencies[max(0, int(len(latencies) * 0.95) - 1)], 2) if latencies else 0.0,
