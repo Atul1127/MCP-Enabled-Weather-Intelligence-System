@@ -39,17 +39,16 @@ class MCPExecutor:
         raise last_error
 
     async def execute(self, function_calls: list[Any]) -> list[tuple[str, dict[str, Any], Any]]:
-        if len(function_calls) > MAX_FUNCTION_CALLS:
-            return [
-                ("__batch__", {}, {
-                    "success": False,
-                    "error": f"Too many tool calls in one round; maximum is {MAX_FUNCTION_CALLS}.",
-                    "error_type": "policy_denied",
-                })
-            ]
+        batch_exceeded = len(function_calls) > MAX_FUNCTION_CALLS
 
         async def one(call: Any) -> tuple[str, dict[str, Any], Any]:
             name, args = str(call.name), dict(call.args or {})
+            if batch_exceeded:
+                return name, args, {
+                    "success": False,
+                    "error": f"Too many tool calls in one round; maximum is {MAX_FUNCTION_CALLS}.",
+                    "error_type": "policy_denied",
+                }
             if name not in self.allowed_tools:
                 return name, args, {"success": False, "error": f"Tool '{name}' is not allowed.", "error_type": "policy_denied"}
             try:
