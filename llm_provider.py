@@ -126,7 +126,14 @@ class GeminiProvider:
     """Dependency-injection wrapper around the shared Gemini retry/fallback policy."""
     def __init__(self, model: str | None = None, client: Any | None = None):
         self.model = model or model_name()
-        self.client = client or _gemini_client()
+        self._client = client
+
+    @property
+    def client(self) -> Any:
+        """Return the shared client, creating it only when first needed."""
+        if self._client is None:
+            self._client = _gemini_client()
+        return self._client
 
     def generate_text(self, messages: list[dict[str, str]], *, temperature: float = 0.0) -> str:
         contents = []
