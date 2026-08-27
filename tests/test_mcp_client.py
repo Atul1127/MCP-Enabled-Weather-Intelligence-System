@@ -1,6 +1,14 @@
 import asyncio
 
-from mcp_client import call_tool, connect, discover_tools
+from mcp_client import (
+    call_tool,
+    connect,
+    discover_prompts,
+    discover_resources,
+    discover_tools,
+    get_prompt,
+    read_resource,
+)
 
 
 def test_mcp_tool_discovery_and_weather_call():
@@ -31,5 +39,34 @@ def test_mcp_tool_discovery_and_weather_call():
             assert risk["date"] == risk["forecast"]["date"]
             assert "recommendation" in risk
             assert "factors" in risk
+
+    asyncio.run(run())
+
+
+def test_mcp_resources_and_prompts():
+    async def run():
+        async with connect() as session:
+            resources = await discover_resources(session)
+            uris = {item.get("uri") for item in resources if item["kind"] == "resource"}
+            templates = {item.get("uri_template") for item in resources if item["kind"] == "template"}
+            assert "weather://capabilities" in uris
+            assert "weather://policy" in uris
+            assert "weather://forecast/{location}/{date}" in templates
+
+            capabilities = await read_resource(session, "weather://capabilities")
+            assert capabilities and "get_weather" in capabilities[0]["text"]
+
+            prompts = await discover_prompts(session)
+            names = {item["name"] for item in prompts}
+            assert {"weather_analysis", "compare_weather", "activity_risk"}.issubset(names)
+
+            rendered = await get_prompt(
+                session,
+                "compare_weather",
+                {"location_a": "Kolkata", "location_b": "Mumbai", "date": "tomorrow"},
+            )
+            assert rendered
+            assert "Kolkata" in (rendered[0]["text"] or "")
+            assert "Mumbai" in (rendered[0]["text"] or "")
 
     asyncio.run(run())
