@@ -16,6 +16,7 @@ from .state import AgentState
 from .synthesizer import GeminiSynthesizer
 from .verifier import EvidenceVerifier
 from .graph.state import GraphState
+from .mcp_registry import MCPCapabilityRegistry
 
 ALLOWED_TOOLS = {"get_weather", "get_forecast", "get_weather_alerts", "assess_weather_risk", "search_weather", "ask_weather"}
 DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
@@ -39,13 +40,8 @@ class WeatherAgent:
         return self._client
 
     @staticmethod
-    def _declarations(discovered: list[dict[str, Any]]) -> list[types.FunctionDeclaration]:
-        declarations = []
-        for tool in discovered:
-            function = tool.get("function", {}); name = function.get("name")
-            if name in ALLOWED_TOOLS:
-                declarations.append(types.FunctionDeclaration(name=name, description=function.get("description", ""), parameters=function.get("parameters") or {"type":"object","properties":{}}))
-        return declarations
+    def _declarations(registry: MCPCapabilityRegistry) -> list[types.FunctionDeclaration]:
+        return [types.FunctionDeclaration(name=item.name, description=item.description, parameters=item.schema) for item in registry.tools]
 
     async def _reason(self, messages: list[types.Content], declarations: list[types.FunctionDeclaration], plan: dict[str, Any], retry_reason: str | None = None):
         instruction = "You are the execution-selection layer. Follow the explicit plan. Use MCP tools for live evidence and weather knowledge. Complete every required plan step before stopping. Gather every required location for comparisons. Never invent live values.\n\nPLAN:\n" + str(plan)
@@ -61,9 +57,12 @@ class WeatherAgent:
         trace_id = new_trace_id(); runtime = AgentState(query=query, trace_id=trace_id)
         emit("agent.start", trace_id=trace_id, model=self.model)
         async with connect(trace_id=trace_id) as session:
-            declarations = self._declarations(await discover_tools(session))
+            discovered = await discover_tools(session)
+            registry = MCPCapabilityRegistry(discovered, allowed_tools=ALLOWED_TOOLS)
+            declarations = self._declarations(registry)
             if not declarations: raise RuntimeError("MCP server exposed no allowed tools")
-            executor = MCPExecutor(session, ALLOWED_TOOLS)
+            emit("agent.mcp_capabilities", trace_id=trace_id, **registry.summary())
+            executor = MCPExecutor(session, registry.allowed_names)
             messages = [types.Content(role="user", parts=[types.Part.from_text(text=query)])]
 
             async def router_node(_: GraphState) -> dict[str, Any]:
