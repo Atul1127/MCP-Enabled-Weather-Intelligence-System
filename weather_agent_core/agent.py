@@ -11,6 +11,7 @@ from rag.citations.validator import validate as validate_citations
 from .executor import MCPExecutor
 from .graph import build_weather_graph
 from .planner import Planner
+from .decomposer import decompose
 from .router import classify
 from .state import AgentState
 from .synthesizer import GeminiSynthesizer
@@ -46,7 +47,7 @@ class WeatherAgent:
         return [types.FunctionDeclaration(name=item.name, description=item.description, parameters=item.schema) for item in selected]
 
     async def _reason(self, messages: list[types.Content], declarations: list[types.FunctionDeclaration], plan: dict[str, Any], retry_reason: str | None = None):
-        instruction = "You are the execution-selection layer. Follow the explicit plan. Use only the MCP capabilities exposed in the current tool declarations. Use MCP tools for live evidence and weather knowledge. Complete every required plan step before stopping. Gather every required location for comparisons. Never invent live values.\n\nPLAN:\n" + str(plan)
+        instruction = "You are the execution-selection layer. Follow the explicit plan and its execution groups. Use only the MCP capabilities exposed in the current tool declarations. Use MCP tools for live evidence and weather knowledge. Complete every required plan step before stopping. Gather every required location for comparisons. Never invent live values.\n\nPLAN:\n" + str(plan)
         if retry_reason:
             instruction += "\n\nVERIFIER FEEDBACK:\n" + retry_reason + "\nCorrect the missing evidence by selecting appropriate MCP tools from the exposed declarations."
         kwargs: dict[str, Any] = {"system_instruction": instruction, "max_output_tokens": 700, "tools": [types.Tool(function_declarations=declarations)], "automatic_function_calling": types.AutomaticFunctionCallingConfig(disable=True)}
@@ -74,7 +75,8 @@ class WeatherAgent:
 
             async def planner_node(state: GraphState) -> dict[str, Any]:
                 nonlocal active_declarations
-                plan = self.planner.build(query); runtime.intent = plan["intent"]; runtime.plan = plan
+                plan = decompose(self.planner.build(query))
+                runtime.intent = plan["intent"]; runtime.plan = plan
                 runtime.required_tool_groups = [set(step["preferred_tools"]) for step in plan["steps"] if step.get("required", True)]
                 runtime.route = "mcp+rag" if plan["requires_knowledge"] and plan["requires_live_data"] else "rag" if plan["requires_knowledge"] else "mcp"
                 if state.get("intent") and state["intent"] != runtime.intent: raise RuntimeError("Router and planner intent disagree")
@@ -84,7 +86,7 @@ class WeatherAgent:
                 missing = sorted(required_names - set(route.selected))
                 if missing: raise RuntimeError(f"MCP plan requires unavailable tools: {', '.join(missing)}")
                 active_declarations = self._declarations(registry, set(route.selected))
-                emit("agent.mcp_route", trace_id=trace_id, requested=list(route.requested), selected=list(route.selected), rejected=list(route.rejected))
+                emit("agent.mcp_route", trace_id=trace_id, requested=list(route.requested), selected=list(route.selected), rejected=list(route.rejected), execution_groups=plan.get("execution_groups", []))
                 return {"plan": plan, "route": runtime.route, "mcp_tools": list(route.selected)}
 
             async def reasoner_node(state: GraphState) -> dict[str, Any]:
