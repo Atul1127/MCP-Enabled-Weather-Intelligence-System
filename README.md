@@ -5,36 +5,36 @@ An **MCP-first weather intelligence platform** for Indian locations. The system 
 ## Architecture
 
 ```text
-User
-  |
-  v
+User / HTTP API
+       |
+       v
 LangGraph WeatherAgent
-  |
-  +--> Router -> Planner -> Decomposer
-  |
-  +--> Reasoner <---- bounded recovery ---- Verifier
-  |       |
-  |       +--> MCP Executor
-  |              |
-  |              +--> current weather
-  |              +--> forecast
-  |              +--> hazard detection
-  |              +--> activity risk
-  |              +--> weather knowledge retrieval
-  |                         |
-  |                         v
-  |                    RAGPipeline
-  |                         |
-  |                         +--> Query analysis / expansion
-  |                         +--> Metadata filtering
-  |                         +--> Dense retrieval
-  |                         +--> BM25
-  |                         +--> Confidence-aware RRF
-  |                         +--> Cross-encoder reranking
-  |                         +--> Context compression
-  |                         |
-  |                         v
-  +-------------------- Unified Evidence
+       |
+       +--> Router -> Planner -> Decomposer
+       |
+       +--> Reasoner <---- bounded recovery ---- Verifier
+       |       |
+       |       +--> MCP Executor
+       |              |
+       |              +--> current weather
+       |              +--> forecast
+       |              +--> hazard detection
+       |              +--> activity risk
+       |              +--> weather knowledge retrieval
+       |                         |
+       |                         v
+       |                    RAGPipeline
+       |                         |
+       |                         +--> Query analysis / expansion
+       |                         +--> Metadata filtering
+       |                         +--> Dense retrieval
+       |                         +--> BM25
+       |                         +--> Confidence-aware RRF
+       |                         +--> Cross-encoder reranking
+       |                         +--> Context compression
+       |                         |
+       |                         v
+       +-------------------- Unified Evidence
                               |
                               v
                        Gemini Synthesizer
@@ -47,7 +47,7 @@ LangGraph WeatherAgent
                            Answer
 ```
 
-**Gemini is the only LLM provider. Ollama is not required.** MCP remains the integration boundary between model reasoning and weather capabilities.
+**Gemini is the only LLM provider. Ollama is not required.** All Gemini text, structured-output, and tool-calling requests pass through the shared `llm_provider.py` gateway, which provides retries and configured model fallback.
 
 ## Highlights
 
@@ -63,7 +63,7 @@ LangGraph WeatherAgent
 - **Typed evidence layer** separating live weather, risk, alerts, and RAG evidence
 - **Structured Gemini synthesis** with schema validation and citation validation
 - **Deterministic MCP input/output security boundaries**
-- **Flask dashboard and HTTP API**
+- **Flask dashboard and separate RAG/agent HTTP endpoints**
 - **Trace-level observability** for routing, MCP, RAG, reranking, and generation
 - **Retrieval, RAG, agent, and answer-quality evaluation suites**
 
@@ -84,6 +84,8 @@ export GEMINI_THINKING_LEVEL=low
 export GEMINI_MAX_OUTPUT_TOKENS=700
 ```
 
+The same settings are used by RAG generation, agent tool selection, and final structured synthesis.
+
 ## Setup
 
 ### Git Bash on Windows
@@ -94,6 +96,10 @@ source .venv/Scripts/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
+
+### Environment template
+
+Copy `.env.example` to `.env` and fill in `GEMINI_API_KEY` and local database credentials when using Docker Compose. `.env` is ignored by Git.
 
 ### MCP smoke test
 
@@ -121,11 +127,24 @@ Useful endpoints:
 
 ```text
 GET  /healthz
-POST /weather/current
-POST /weather/alerts
-POST /weather/ask
-POST /weather/sync
+POST /weather/current      Direct live weather endpoint
+POST /weather/alerts       Direct deterministic hazard endpoint
+POST /weather/ask          RAG-only knowledge endpoint
+POST /weather/agent        Full LangGraph + MCP + RAG agent
+POST /weather/sync         Protected write endpoint (disabled by default)
 ```
+
+The `/weather/ask` route intentionally remains a lightweight RAG endpoint. Use `/weather/agent` when you want the complete agentic workflow.
+
+## Docker Compose
+
+Create `.env` from `.env.example`, set `POSTGRES_PASSWORD` and `GEMINI_API_KEY`, then run:
+
+```bash
+docker compose up --build
+```
+
+Database and API credentials are supplied through environment variables rather than committed Docker defaults. Synchronization remains disabled unless explicitly enabled and authenticated.
 
 ## MCP tools
 
@@ -137,8 +156,10 @@ POST /weather/sync
 | `assess_weather_risk` | Deterministic activity-risk assessment |
 | `search_weather` | Hybrid weather knowledge retrieval and evidence preparation |
 | `ask_weather` | Alias for weather knowledge evidence retrieval |
-| `sync_weather` | Fetch and persist fresh weather data |
+| `sync_weather` | Fetch and persist fresh weather data; not exposed to the model allowlist |
 | `database_health` | Lakebase/PostgreSQL health check |
+
+The model-facing allowlist deliberately excludes write-capable `sync_weather`. MCP discovery can still expose server capabilities, while the agent executor enforces the application policy.
 
 ## Modular RAG
 
@@ -168,11 +189,11 @@ The local benchmark path uses the file-backed `LocalRagStore`. PostgreSQL/Lakeba
 
 ## Security
 
-The agent applies deterministic prompt-injection signal checks to user input. MCP tool arguments are validated before execution, and untrusted MCP results are bounded by type, size, and nesting depth. These are defense-in-depth controls, not a complete prompt-injection solution.
+The agent applies deterministic prompt-injection signal checks to user input. MCP tool arguments are validated before execution, and untrusted MCP results are bounded by type, size, and nesting depth. Both the reasoning and final synthesis prompts explicitly treat tool output and retrieved content as untrusted data. These are defense-in-depth controls, not a complete prompt-injection solution.
 
 ## Observability
 
-Agent, MCP, retrieval, reranking, context compression, and synthesis stages emit trace events with a trace ID. Set `WEATHER_TRACE_PATH` to change the JSONL destination.
+Agent, MCP, retrieval, reranking, context compression, and synthesis stages emit trace events with a trace ID. The MCP stdio environment propagates `WEATHER_TRACE_ID`, so server-side MCP events can be correlated with the originating agent run. Set `WEATHER_TRACE_PATH` to change the JSONL destination.
 
 Inspect a trace with:
 
@@ -188,21 +209,24 @@ Run the full unit/integration suite:
 python -m pytest -q
 ```
 
-Retrieval benchmark:
+For quota-friendly live agent checks, run only a small subset first:
+
+```bash
+python -m evaluation.agent_e2e_smoke --limit 1
+python -m evaluation.agent_e2e_smoke --limit 3 --category live_weather
+```
+
+Full live benchmark:
+
+```bash
+python evaluation/agent_e2e_eval.py
+```
+
+Other evaluation suites:
 
 ```bash
 python evaluation/retrieval_benchmark.py
-```
-
-RAG LLM evaluation:
-
-```bash
 python evaluation/rag_llm_eval.py
-```
-
-Agent benchmark:
-
-```bash
 python evaluation/agent_benchmark.py
 ```
 
@@ -219,22 +243,23 @@ The evaluation stack measures retrieval quality, tool-selection accuracy, argume
 - **RRF** — hybrid ranking
 - **Flask** — API/dashboard
 - **PostgreSQL / pgvector** — persistence/vector search where configured
-- **Python** — application and MCP implementation
+- **Python 3.13** — application, MCP implementation, CI, and container runtime
 
 ## Project structure
 
 ```text
 agent.py                    Canonical CLI + compatibility API
 weather_agent_core/         Router, planner, LangGraph, executor, evidence, synthesis
-llm_provider.py             Gemini generation provider
-mcp_client.py               MCP stdio client + tool discovery
+llm_provider.py             Single Gemini generation/tool-calling gateway
+mcp_client.py               MCP stdio client + capability discovery
 mcp_server.py               MCP server + weather/RAG tools
 rag/                        Modular RAG pipeline
 rag_service.py              Thin HTTP-facing RAG adapter
 app.py                      Flask dashboard/API
-evaluation/                 Benchmarks, traces, and answer evaluation
+ evaluation/                Benchmarks, traces, and answer evaluation
 tests/                      Unit and integration tests
 docs/                       Architecture/documentation
+.env.example                Deployment configuration template
 ```
 
 ## Design goal
