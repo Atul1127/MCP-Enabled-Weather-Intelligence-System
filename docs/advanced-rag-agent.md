@@ -1,6 +1,6 @@
-# Advanced local agent + RAG
+# Gemini Agent + Modular RAG
 
-The upgrade branch turns the weather project into a local-first agentic RAG system.
+The main branch is a Gemini-only, MCP-first weather intelligence system with a modular local RAG stack.
 
 ## Architecture
 
@@ -8,70 +8,77 @@ The upgrade branch turns the weather project into a local-first agentic RAG syst
 User
   |
   v
-ReAct Agent (Ollama)
+Gemini WeatherAgent
   |
-  +--> MCP live weather tools
-  |      +--> current forecast
-  |      +--> alerts
-  |      +--> activity risk
+  +--> Router / Planner
   |
-  +--> MCP retrieval tools
+  +--> MCP Executor
          |
-         +--> query expansion
-         +--> metadata filtering
-         +--> dense retrieval
-         +--> BM25
-         +--> Reciprocal Rank Fusion
-         +--> cross-encoder reranking
-         +--> context compression
-         +--> grounded generation
-
-All stages emit trace events to observability/traces.jsonl.
+         +--> live weather
+         +--> forecast
+         +--> hazard detection
+         +--> activity risk
+         +--> weather knowledge retrieval
+                    |
+                    v
+               RAGPipeline
+                    |
+                    +--> query analysis
+                    +--> query expansion
+                    +--> metadata filtering
+                    +--> dense retrieval
+                    +--> BM25
+                    +--> confidence-aware RRF
+                    +--> cross-encoder reranking
+                    +--> context compression
+                    |
+                    v
+              Unified Evidence
+                    |
+                    v
+             Gemini Synthesizer
+                    |
+                    v
+             citation-aware answer
 ```
 
-## Local backend
+The MCP server is the capability boundary. The agent owns reasoning and orchestration. RAG owns retrieval and evidence preparation. The final Gemini synthesizer combines live MCP evidence with RAG evidence.
 
-The default RAG backend is file-backed and does **not** require PostgreSQL,
-Lakebase, Databricks credentials, an API key, or a paid service. The corpus is
-`data/weather_knowledge.jsonl`; dense embeddings are built in memory with the
-local Sentence Transformers model and BM25 runs locally.
+## Local RAG backend
 
-The production PostgreSQL/Lakebase infrastructure remains in the repository for
-managed deployments and for the existing weather-data ingestion path. It is not
-required to run the local RAG demo.
+The default RAG backend is file-backed and does not require PostgreSQL, Lakebase, Databricks credentials, or a paid vector database. The corpus is `data/weather_knowledge.jsonl`; dense embeddings use the local Sentence Transformers model and lexical retrieval uses BM25.
 
-Start Ollama and make sure the configured model is available (default:
-`llama3.2:3b`). Then run:
+The PostgreSQL/Lakebase infrastructure remains available for managed weather-data ingestion and deployment paths.
+
+## Gemini
+
+Set:
 
 ```bash
-python agent.py "What weather conditions are typically associated with heavy rainfall?"
+export GEMINI_API_KEY="your-key"
+export GEMINI_MODEL=gemini-3.6-flash
 ```
 
-## Advanced RAG
-
-`advanced_rag.py` implements multi-query expansion, metadata filtering, dense
-retrieval, BM25, RRF fusion, cross-encoder reranking, bounded context
-compression, source citations, and structured trace IDs.
-
-A failed retrieval returns an explicit grounded-retrieval failure instead of
-falling back to the general LLM knowledge.
+Optional fallback models and thinking settings are configured through the environment variables documented in the README.
 
 ## Evaluation
 
-Run:
+Run the repository tests first:
 
 ```bash
-python evaluation/evaluate_rag_local.py
-python evaluation/evaluate_agent.py
+python -m pytest -q
 ```
 
-The evaluators use the local Ollama model where an LLM judge is required. They
-also report retrieval/agent metrics without requiring an external telemetry or
-LLM API service.
+Then run the retrieval and agent benchmarks:
+
+```bash
+python evaluation/retrieval_benchmark.py
+python evaluation/rag_llm_eval.py
+python evaluation/agent_benchmark.py
+```
+
+The evaluation stack measures retrieval quality, tool-selection accuracy, argument accuracy, latency, evidence relevance, faithfulness, and citation behavior.
 
 ## Observability
 
-Set `WEATHER_TRACE_PATH` to change the JSONL destination. Each agent/RAG run
-gets a trace ID and emits spans for reasoning, tool execution, retrieval, query
-expansion, reranking, context construction, and generation. No external
-telemetry service is required.
+Set `WEATHER_TRACE_PATH` to change the JSONL destination. Agent, MCP, retrieval, reranking, compression, and synthesis stages emit trace events with a trace ID.
