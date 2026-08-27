@@ -26,7 +26,15 @@ def new_span_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
+def _effective_trace_id(trace_id: str) -> str:
+    """Use the MCP server's propagated trace when callers omit it."""
+    if trace_id != "unknown":
+        return trace_id
+    return os.environ.get("WEATHER_TRACE_ID", "unknown")
+
+
 def emit(event: str, *, trace_id: str, **fields: Any) -> None:
+    trace_id = _effective_trace_id(trace_id)
     payload = {"timestamp": time.time(), "event": event, "trace_id": trace_id, **fields}
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with LOG_PATH.open("a", encoding="utf-8") as handle:
@@ -35,13 +43,19 @@ def emit(event: str, *, trace_id: str, **fields: Any) -> None:
 
 @contextmanager
 def span(name: str, *, trace_id: str, **fields: Any) -> Iterator[dict[str, Any]]:
-    started = time.perf_counter(); span_id = new_span_id(); parent_span_id = _CURRENT_SPAN.get(); token = _CURRENT_SPAN.set(span_id)
+    trace_id = _effective_trace_id(trace_id)
+    started = time.perf_counter()
+    span_id = new_span_id()
+    parent_span_id = _CURRENT_SPAN.get()
+    token = _CURRENT_SPAN.set(span_id)
     emit("span.start", trace_id=trace_id, span=name, span_id=span_id, parent_span_id=parent_span_id, **fields)
     result: dict[str, Any] = {}
     try:
-        yield result; result["ok"] = True
+        yield result
+        result["ok"] = True
     except Exception as exc:
-        result.update(ok=False, error=str(exc)); raise
+        result.update(ok=False, error=str(exc))
+        raise
     finally:
         result["latency_ms"] = round((time.perf_counter() - started) * 1000, 2)
         emit("span.end", trace_id=trace_id, span=name, span_id=span_id, parent_span_id=parent_span_id, **result)
@@ -49,12 +63,16 @@ def span(name: str, *, trace_id: str, **fields: Any) -> Iterator[dict[str, Any]]
 
 
 def read_trace(trace_id: str) -> list[dict[str, Any]]:
-    if not LOG_PATH.exists(): return []
+    if not LOG_PATH.exists():
+        return []
     events: list[dict[str, Any]] = []
     for line in LOG_PATH.read_text(encoding="utf-8").splitlines():
-        try: item = json.loads(line)
-        except json.JSONDecodeError: continue
-        if item.get("trace_id") == trace_id: events.append(item)
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if item.get("trace_id") == trace_id:
+            events.append(item)
     return events
 
 
