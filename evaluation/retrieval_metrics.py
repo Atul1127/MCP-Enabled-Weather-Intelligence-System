@@ -1,5 +1,6 @@
 """Deterministic retrieval metrics for topic-proxy and document-level evaluation."""
 from __future__ import annotations
+
 import math
 from typing import Sequence
 
@@ -37,9 +38,23 @@ def ndcg_at_k(relevances: Sequence[int], k: int) -> float:
 
 
 def document_relevance(documents: Sequence[dict], relevant_ids: Sequence[str]) -> list[int]:
-    """Mark a ranked document relevant when its ID is in ground truth."""
+    """Mark each unique ranked document as relevant at most once.
+
+    Duplicate IDs remain as non-relevant rank positions so rank-based metrics
+    retain their original positions, while recall cannot count one document twice.
+    """
     expected = {str(value).strip() for value in relevant_ids if str(value).strip()}
-    return [int(str(doc.get("id", doc.get("document_id", ""))) in expected) for doc in documents]
+    seen: set[str] = set()
+    relevance: list[int] = []
+    for doc in documents:
+        doc_id = str(doc.get("id", doc.get("document_id", ""))).strip()
+        if doc_id and doc_id in seen:
+            relevance.append(0)
+            continue
+        if doc_id:
+            seen.add(doc_id)
+        relevance.append(int(bool(doc_id and doc_id in expected)))
+    return relevance
 
 
 def evaluate_relevant_documents(
@@ -51,8 +66,10 @@ def evaluate_relevant_documents(
     result: dict[str, float] = {"mrr": reciprocal_rank(relevance)}
     for k in ks:
         result[f"precision_at_{k}"] = precision_at_k(relevance, k)
-        result[f"recall_at_{k}"] = min(1.0, sum(relevance[:k]) / len(expected)) if expected else 0.0
-        result[f"ndcg_at_{k}"] = ndcg_at_k(relevance + [0] * max(0, len(expected) - sum(relevance)), k)
+        result[f"recall_at_{k}"] = (
+            min(1.0, sum(relevance[:k]) / len(expected)) if expected else 0.0
+        )
+        result[f"ndcg_at_{k}"] = ndcg_at_k(relevance, k)
     return result
 
 
@@ -61,7 +78,13 @@ def topic_relevance(
 ) -> list[int]:
     topics = [str(topic).strip().lower() for topic in expected_topics if str(topic).strip()]
     return [
-        int(any(topic in str(document.get(field) or "").lower() or str(document.get(field) or "").lower() in topic for topic in topics))
+        int(
+            any(
+                topic in str(document.get(field) or "").lower()
+                or str(document.get(field) or "").lower() in topic
+                for topic in topics
+            )
+        )
         for document in documents
     ]
 
