@@ -11,7 +11,7 @@ class AgentState:
     intent: str = "unknown"
     route: str = "agentic"
     plan: dict[str, Any] = field(default_factory=dict)
-    required_tools: set[str] = field(default_factory=set)
+    required_tool_groups: list[set[str]] = field(default_factory=list)
     observations: list[dict[str, Any]] = field(default_factory=list)
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     evidence: list[Evidence] = field(default_factory=list)
@@ -31,13 +31,20 @@ class AgentState:
                     self.sources.append(source)
 
     @property
+    def required_requirements_satisfied(self) -> bool:
+        for group in self.required_tool_groups:
+            if not any(obs["tool"] in group and not (isinstance(obs.get("result"), dict) and obs["result"].get("success") is False) for obs in self.observations):
+                return False
+        return True
+
+    @property
     def retrieval_failed(self) -> bool:
-        return any(obs["tool"] in {"search_weather", "ask_weather"} and obs["tool"] in self.required_tools and isinstance(obs.get("result"), dict) and obs["result"].get("success") is False for obs in self.observations)
+        return any(obs["tool"] in {"search_weather", "ask_weather"} and isinstance(obs.get("result"), dict) and obs["result"].get("success") is False for obs in self.observations)
 
     @property
     def has_live_failure(self) -> bool:
         live_tools = {"get_weather", "get_forecast", "get_weather_alerts", "assess_weather_risk"}
-        return any(obs["tool"] in live_tools and obs["tool"] in self.required_tools and isinstance(obs.get("result"), dict) and obs["result"].get("success") is False for obs in self.observations)
+        return any(obs["tool"] in live_tools and isinstance(obs.get("result"), dict) and obs["result"].get("success") is False for obs in self.observations)
 
     def evidence_payload(self) -> list[dict[str, Any]]:
         return [item.to_dict() for item in self.evidence]
