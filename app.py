@@ -1,6 +1,7 @@
 """Indian Weather RAG API and intelligence dashboard."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import secrets
@@ -10,6 +11,7 @@ from flask import Flask, jsonify, render_template, request
 import lakebase
 import rag_service
 import weather_client
+from weather_agent_core import WeatherAgent
 from weather_agent_core.security import inspect_text, validate_location, validate_top_k, validate_user_query
 
 logging.basicConfig(level=logging.INFO)
@@ -100,6 +102,7 @@ def weather_alerts():
 
 @app.route("/weather/ask", methods=["POST"])
 def weather_ask():
+    """RAG-only knowledge endpoint; the full agent is exposed separately."""
     body = request.get_json(silent=True) or {}
     query = body.get("query")
     if not query or not isinstance(query, str):
@@ -120,6 +123,25 @@ def weather_ask():
     except Exception:
         logger.exception("Weather RAG request failed")
         return jsonify({"error": "Failed to generate weather answer"}), 502
+
+
+@app.route("/weather/agent", methods=["POST"])
+def weather_agent():
+    """Run the canonical LangGraph + MCP + RAG WeatherAgent."""
+    body = request.get_json(silent=True) or {}
+    query = body.get("query")
+    if not isinstance(query, str) or not query.strip():
+        return jsonify({"error": "Missing or invalid 'query' in request body"}), 400
+    try:
+        query = validate_user_query(query)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    try:
+        result = asyncio.run(WeatherAgent().run(query))
+        return jsonify(result), 200 if result.get("success") else 502
+    except Exception:
+        logger.exception("Weather agent request failed")
+        return jsonify({"error": "Failed to generate agent answer"}), 502
 
 
 @app.route("/weather/sync", methods=["POST"])
