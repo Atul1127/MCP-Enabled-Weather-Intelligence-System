@@ -42,21 +42,12 @@ class WeatherAgent:
             name = function.get("name")
             if name not in ALLOWED_TOOLS:
                 continue
-            declarations.append(types.FunctionDeclaration(
-                name=name,
-                description=function.get("description", ""),
-                parameters=function.get("parameters") or {"type": "object", "properties": {}},
-            ))
+            declarations.append(types.FunctionDeclaration(name=name, description=function.get("description", ""), parameters=function.get("parameters") or {"type": "object", "properties": {}}))
         return declarations
 
     async def _reason(self, contents: list[types.Content], declarations: list[types.FunctionDeclaration], plan: dict[str, Any]):
         config_kwargs: dict[str, Any] = {
-            "system_instruction": (
-                "You are the execution-selection layer. Follow the explicit plan. "
-                "Use MCP tools for live evidence and weather knowledge. Complete every "
-                "required plan step before stopping. Gather every required location for "
-                "comparisons. Never invent live values.\n\nPLAN:\n" + str(plan)
-            ),
+            "system_instruction": "You are the execution-selection layer. Follow the explicit plan. Use MCP tools for live evidence and weather knowledge. Complete every required plan step before stopping. Gather every required location for comparisons. Never invent live values.\n\nPLAN:\n" + str(plan),
             "max_output_tokens": 700,
             "tools": [types.Tool(function_declarations=declarations)],
             "automatic_function_calling": types.AutomaticFunctionCallingConfig(disable=True),
@@ -75,11 +66,8 @@ class WeatherAgent:
         plan = self.planner.build(query)
         state.intent = plan["intent"]
         state.plan = plan
-        state.route = (
-            "rag" if plan["requires_knowledge"] and not plan["requires_live_data"]
-            else "mcp+rag" if plan["requires_knowledge"] and plan["requires_live_data"]
-            else "mcp"
-        )
+        state.required_tool_groups = [set(step["preferred_tools"]) for step in plan["steps"] if step.get("required", True)]
+        state.route = "rag" if plan["requires_knowledge"] and not plan["requires_live_data"] else "mcp+rag" if plan["requires_knowledge"] and plan["requires_live_data"] else "mcp"
         emit("agent.start", trace_id=trace_id, intent=state.intent, route=state.route, model=self.model)
         rounds_used = 0
         async with connect(trace_id=trace_id) as session:
@@ -104,11 +92,10 @@ class WeatherAgent:
                 response_parts = []
                 for function_call, (name, args, result) in zip(calls, results):
                     state.add_observation(name, args, result)
-                    success = not (isinstance(result, dict) and result.get("success") is False)
-                    emit("agent.tool", trace_id=trace_id, tool=name, success=success, round=round_no)
+                    emit("agent.tool", trace_id=trace_id, tool=name, success=not (isinstance(result, dict) and result.get("success") is False), round=round_no)
                     response_parts.append(types.Part.from_function_response(name=name, response=result if isinstance(result, dict) else {"result": result}, id=getattr(function_call, "id", None)))
                 contents.append(types.Content(role="user", parts=response_parts))
         answer = await GeminiSynthesizer(self._client_or_raise(), self.model).synthesize(query, state)
-        success = not state.has_live_failure and not state.retrieval_failed
+        success = state.required_requirements_satisfied
         emit("agent.end", trace_id=trace_id, intent=state.intent, rounds=rounds_used, tools=len(state.tool_calls), success=success)
         return {"success": success, "answer": answer, "trace_id": trace_id, "intent": state.intent, "route": state.route, "plan": state.plan, "tool_calls": state.tool_calls, "observations": state.observations, "evidence": state.evidence_payload(), "sources": state.sources, "errors": state.errors, "rounds": rounds_used}
