@@ -1,0 +1,56 @@
+import asyncio
+from types import SimpleNamespace
+
+import pytest
+
+import weather_agent_core.executor as executor_module
+from weather_agent_core.executor import MCPExecutor
+
+
+class Session:
+    pass
+
+
+def call(name, args=None):
+    return SimpleNamespace(name=name, args=args or {})
+
+
+def test_denied_tool_never_calls_mcp(monkeypatch):
+    async def unexpected(*args, **kwargs):
+        raise AssertionError("MCP should not be called")
+
+    monkeypatch.setattr(executor_module, "call_tool", unexpected)
+    result = asyncio.run(MCPExecutor(Session(), {"allowed"}).execute([call("denied")]))
+    assert result[0][2]["error_type"] == "policy_denied"
+
+
+def test_timeout_is_normalized(monkeypatch):
+    async def slow(*args, **kwargs):
+        await asyncio.sleep(0.05)
+
+    monkeypatch.setattr(executor_module, "call_tool", slow)
+    result = asyncio.run(MCPExecutor(Session(), {"weather"}, timeout_seconds=0.001, max_retries=0).execute([call("weather")]))
+    assert result[0][2]["error_type"] == "timeout"
+
+
+def test_retry_recovers(monkeypatch):
+    attempts = 0
+
+    async def flaky(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("temporary")
+        return {"success": True, "value": 42}
+
+    monkeypatch.setattr(executor_module, "call_tool", flaky)
+    result = asyncio.run(MCPExecutor(Session(), {"weather"}, timeout_seconds=1, max_retries=1).execute([call("weather")]))
+    assert attempts == 2
+    assert result[0][2]["value"] == 42
+
+
+def test_invalid_executor_configuration():
+    with pytest.raises(ValueError):
+        MCPExecutor(Session(), set(), timeout_seconds=0)
+    with pytest.raises(ValueError):
+        MCPExecutor(Session(), set(), max_retries=-1)
