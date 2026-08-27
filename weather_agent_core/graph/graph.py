@@ -1,8 +1,4 @@
-"""LangGraph workflow definition.
-
-The graph owns orchestration only. Gemini remains the reasoning/generation layer,
-MCP remains the capability boundary, and RAG remains a retrieval subsystem.
-"""
+"""LangGraph orchestration graph for the weather agent."""
 from __future__ import annotations
 from typing import Any, Awaitable, Callable
 from .state import GraphState
@@ -11,6 +7,9 @@ Node = Callable[[GraphState], Awaitable[dict[str, Any]]]
 
 
 def build_weather_graph(*, router: Node, planner: Node, reasoner: Node, executor: Node, synthesizer: Node, max_rounds: int = 4):
+    """Compile Router -> Planner -> Reasoner <-> Executor -> Synthesizer."""
+    if max_rounds < 1:
+        raise ValueError("max_rounds must be at least 1")
     try:
         from langgraph.graph import END, START, StateGraph
     except ImportError as exc:
