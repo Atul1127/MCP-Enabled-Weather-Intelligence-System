@@ -1,4 +1,4 @@
-"""Orchestrator: Router -> Planner -> Gemini tool selection -> MCP Executor -> Synthesizer."""
+"""Stateful Gemini agent: Router -> Planner -> Reasoner -> MCP Executor -> Synthesizer."""
 from __future__ import annotations
 
 import asyncio
@@ -26,7 +26,7 @@ MAX_ROUNDS = max(1, int(os.environ.get("WEATHER_AGENT_MAX_ROUNDS", "4")))
 
 
 class WeatherAgent:
-    """Stateful orchestration boundary for the weather intelligence system."""
+    """Application orchestration boundary; capabilities remain behind MCP."""
 
     def __init__(self, model: str = DEFAULT_MODEL, max_rounds: int = MAX_ROUNDS):
         self.model = model
@@ -44,28 +44,26 @@ class WeatherAgent:
 
     @staticmethod
     def _declarations(discovered: list[dict[str, Any]]) -> list[types.FunctionDeclaration]:
-        declarations = []
-        for tool in discovered:
-            fn = tool["function"]
-            if fn["name"] not in ALLOWED_TOOLS:
-                continue
-            declarations.append(types.FunctionDeclaration(
-                name=fn["name"],
-                description=fn.get("description", ""),
-                parameters=fn.get("parameters") or {"type": "object", "properties": {}},
-            ))
-        return declarations
+        return [
+            types.FunctionDeclaration(
+                name=tool["function"]["name"],
+                description=tool["function"].get("description", ""),
+                parameters=tool["function"].get("parameters") or {"type": "object", "properties": {}},
+            )
+            for tool in discovered
+            if tool["function"]["name"] in ALLOWED_TOOLS
+        ]
 
-    async def _reason(self, contents: list[Any], declarations: list[types.FunctionDeclaration], plan: dict) -> Any:
-        prompt = (
-            "You are the planning/reasoning layer of an Indian Weather Intelligence agent.\n"
-            "Follow the execution plan, but use MCP tools as the source of truth.\n"
-            "Never invent live weather data. For comparisons, collect evidence for every requested location.\n"
-            "Use search_weather/ask_weather for conceptual or historical knowledge.\n\n"
-            f"Execution plan: {plan}"
+    async def _reason(self, contents: list[Any], declarations: list[types.FunctionDeclaration], plan: dict[str, Any]) -> Any:
+        instruction = (
+            "You are the reasoning/execution-selection layer of an Indian Weather Intelligence agent. "
+            "Follow the explicit plan and use MCP tools for evidence. Never invent live values. "
+            "For comparison requests, gather evidence for every requested location. "
+            "Use knowledge tools for conceptual guidance. Do not answer until required evidence has been collected.\n\n"
+            f"Plan:\n{plan}"
         )
         config = types.GenerateContentConfig(
-            system_instruction=prompt,
+            system_instruction=instruction,
             temperature=0,
             max_output_tokens=700,
             tools=[types.Tool(function_declarations=declarations)],
@@ -87,8 +85,8 @@ class WeatherAgent:
         state = AgentState(query=query, trace_id=trace_id)
         plan = self.planner.build(query)
         state.intent = plan["intent"]
-        state.plan = plan["steps"]
-        state.route = "knowledge" if state.intent == "knowledge" else "mcp_agent"
+        state.plan = plan
+        state.route = "rag" if state.intent == "knowledge" else "mcp+rAG" if plan.get("requires_knowledge") else "mcp"
         emit("agent.start", trace_id=trace_id, intent=state.intent, route=state.route, model=self.model)
 
         async with connect(trace_id=trace_id) as session:
@@ -101,16 +99,12 @@ class WeatherAgent:
                 with span("agent.reason", trace_id=trace_id, round=round_no) as info:
                     response = await self._reason(contents, declarations, plan)
                     calls = list(response.function_calls or [])
-                    info["tool_calls"] = len(calls)
-                    info["model"] = self.model
+                    info.update(tool_calls=len(calls), model=self.model)
 
                 candidate = response.candidates[0] if response.candidates else None
                 if candidate is None or candidate.content is None:
                     raise RuntimeError("Gemini returned no candidate content")
-
                 if not calls:
-                    # No new evidence was requested. Let the dedicated synthesizer
-                    # produce the final answer from the state accumulated so far.
                     break
 
                 contents.append(candidate.content)
@@ -121,30 +115,21 @@ class WeatherAgent:
                 response_parts: list[types.Part] = []
                 for function_call, (name, args, result) in zip(calls, results):
                     state.add_observation(name, args, result)
-                    if isinstance(result, dict) and not result.get("success", True):
-                        state.errors.append(f"{name}: {result.get('error', 'tool failed')}")
-                    emit("agent.tool", trace_id=trace_id, tool=name, success=not state.errors[-1:] or not state.errors[-1].startswith(name + ":"))
+                    success = not (isinstance(result, dict) and result.get("success") is False)
+                    emit("agent.tool", trace_id=trace_id, tool=name, success=success, round=round_no)
                     response_parts.append(types.Part.from_function_response(
                         name=name,
                         response=result if isinstance(result, dict) else {"result": result},
                         id=getattr(function_call, "id", None),
                     ))
-                    if isinstance(result, dict):
-                        for source in result.get("sources") or []:
-                            if isinstance(source, dict) and source not in state.sources:
-                                state.sources.append(source)
                 contents.append(types.Content(role="user", parts=response_parts))
 
         with span("agent.synthesize", trace_id=trace_id) as info:
             answer = await GeminiSynthesizer(self._client_or_raise(), self.model).synthesize(query, state)
             info["answer_chars"] = len(answer)
 
-        success = not state.retrieval_failed and not any(
-            isinstance(obs.get("result"), dict) and obs["result"].get("success") is False
-            for obs in state.observations
-            if obs["tool"] in {"get_weather", "get_forecast", "get_weather_alerts", "assess_weather_risk"}
-        )
-        emit("agent.end", trace_id=trace_id, intent=state.intent, rounds=self.max_rounds, tools=len(state.tool_calls), success=success)
+        success = not state.has_live_failure and not state.retrieval_failed
+        emit("agent.end", trace_id=trace_id, intent=state.intent, rounds=min(self.max_rounds, len(state.observations) + 1), tools=len(state.tool_calls), success=success)
         return {
             "success": success,
             "answer": answer,
@@ -155,4 +140,5 @@ class WeatherAgent:
             "tool_calls": state.tool_calls,
             "observations": state.observations,
             "sources": state.sources,
+            "errors": state.errors,
         }
