@@ -17,6 +17,7 @@ from .synthesizer import GeminiSynthesizer
 from .verifier import EvidenceVerifier
 from .graph.state import GraphState
 from .mcp_registry import MCPCapabilityRegistry
+from .mcp_router import MCPCapabilityRouter
 
 ALLOWED_TOOLS = {"get_weather", "get_forecast", "get_weather_alerts", "assess_weather_risk", "search_weather", "ask_weather"}
 DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
@@ -40,13 +41,14 @@ class WeatherAgent:
         return self._client
 
     @staticmethod
-    def _declarations(registry: MCPCapabilityRegistry) -> list[types.FunctionDeclaration]:
-        return [types.FunctionDeclaration(name=item.name, description=item.description, parameters=item.schema) for item in registry.tools]
+    def _declarations(registry: MCPCapabilityRegistry, names: set[str] | None = None) -> list[types.FunctionDeclaration]:
+        selected = registry.tools if names is None else tuple(item for item in registry.tools if item.name in names)
+        return [types.FunctionDeclaration(name=item.name, description=item.description, parameters=item.schema) for item in selected]
 
     async def _reason(self, messages: list[types.Content], declarations: list[types.FunctionDeclaration], plan: dict[str, Any], retry_reason: str | None = None):
-        instruction = "You are the execution-selection layer. Follow the explicit plan. Use MCP tools for live evidence and weather knowledge. Complete every required plan step before stopping. Gather every required location for comparisons. Never invent live values.\n\nPLAN:\n" + str(plan)
+        instruction = "You are the execution-selection layer. Follow the explicit plan. Use only the MCP capabilities exposed in the current tool declarations. Use MCP tools for live evidence and weather knowledge. Complete every required plan step before stopping. Gather every required location for comparisons. Never invent live values.\n\nPLAN:\n" + str(plan)
         if retry_reason:
-            instruction += "\n\nVERIFIER FEEDBACK:\n" + retry_reason + "\nCorrect the missing evidence by selecting appropriate MCP tools."
+            instruction += "\n\nVERIFIER FEEDBACK:\n" + retry_reason + "\nCorrect the missing evidence by selecting appropriate MCP tools from the exposed declarations."
         kwargs: dict[str, Any] = {"system_instruction": instruction, "max_output_tokens": 700, "tools": [types.Tool(function_declarations=declarations)], "automatic_function_calling": types.AutomaticFunctionCallingConfig(disable=True)}
         if not self.model.startswith(("gemini-3.5", "gemini-3.6", "gemini-3.7")): kwargs["temperature"] = 0
         return await asyncio.to_thread(self._client_or_raise().models.generate_content, model=self.model, contents=messages, config=types.GenerateContentConfig(**kwargs))
@@ -59,26 +61,36 @@ class WeatherAgent:
         async with connect(trace_id=trace_id) as session:
             discovered = await discover_tools(session)
             registry = MCPCapabilityRegistry(discovered, allowed_tools=ALLOWED_TOOLS)
+            capability_router = MCPCapabilityRouter(registry)
             declarations = self._declarations(registry)
             if not declarations: raise RuntimeError("MCP server exposed no allowed tools")
             emit("agent.mcp_capabilities", trace_id=trace_id, **registry.summary())
             executor = MCPExecutor(session, registry.allowed_names)
             messages = [types.Content(role="user", parts=[types.Part.from_text(text=query)])]
+            active_declarations = declarations
 
             async def router_node(_: GraphState) -> dict[str, Any]:
                 return {"intent": classify(query), "route": "pending"}
 
             async def planner_node(state: GraphState) -> dict[str, Any]:
+                nonlocal active_declarations
                 plan = self.planner.build(query); runtime.intent = plan["intent"]; runtime.plan = plan
                 runtime.required_tool_groups = [set(step["preferred_tools"]) for step in plan["steps"] if step.get("required", True)]
                 runtime.route = "mcp+rag" if plan["requires_knowledge"] and plan["requires_live_data"] else "rag" if plan["requires_knowledge"] else "mcp"
                 if state.get("intent") and state["intent"] != runtime.intent: raise RuntimeError("Router and planner intent disagree")
-                return {"plan": plan, "route": runtime.route}
+                route = capability_router.route_plan(plan)
+                required_steps = [step for step in plan.get("steps", []) if step.get("required", True)]
+                required_names = {name for step in required_steps for name in step.get("preferred_tools", [])}
+                missing = sorted(required_names - set(route.selected))
+                if missing: raise RuntimeError(f"MCP plan requires unavailable tools: {', '.join(missing)}")
+                active_declarations = self._declarations(registry, set(route.selected))
+                emit("agent.mcp_route", trace_id=trace_id, requested=list(route.requested), selected=list(route.selected), rejected=list(route.rejected))
+                return {"plan": plan, "route": runtime.route, "mcp_tools": list(route.selected)}
 
             async def reasoner_node(state: GraphState) -> dict[str, Any]:
                 round_no = int(state.get("rounds", 0)) + 1
                 with span("agent.reason", trace_id=trace_id, round=round_no) as info:
-                    response = await self._reason(messages, declarations, runtime.plan, state.get("retry_reason")); calls = list(response.function_calls or []); info.update(tool_calls=len(calls), model=self.model)
+                    response = await self._reason(messages, active_declarations, runtime.plan, state.get("retry_reason")); calls = list(response.function_calls or []); info.update(tool_calls=len(calls), model=self.model)
                 candidate = response.candidates[0] if response.candidates else None
                 if candidate is None or candidate.content is None: raise RuntimeError("Gemini returned no candidate content")
                 if not calls: return {"next_action": "finish", "rounds": round_no, "candidate": candidate.content}
