@@ -256,7 +256,7 @@ mcp_server.py               MCP server + weather/RAG tools
 rag/                        Modular RAG pipeline
 rag_service.py              Thin HTTP-facing RAG adapter
 app.py                      Flask dashboard/API
- evaluation/                Benchmarks, traces, and answer evaluation
+evaluation/                 Benchmarks, traces, and answer evaluation
 tests/                      Unit and integration tests
 docs/                       Architecture/documentation
 .env.example                Deployment configuration template
