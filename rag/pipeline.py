@@ -27,17 +27,23 @@ class RetrievalResult:
 
 class RAGPipeline:
     def __init__(self, *, dense_k: int = 30, sparse_k: int = 30, fusion_k: int = 10, top_k: int = 5):
+        if min(dense_k, sparse_k, fusion_k, top_k) < 1:
+            raise ValueError("RAG retrieval limits must be positive")
         self.dense_k, self.sparse_k, self.fusion_k, self.top_k = dense_k, sparse_k, fusion_k, top_k
 
-    def retrieve(self, query: str, *, location: str | None = None, state: str | None = None, expand_query: Callable[[str], str] | None = None) -> RetrievalResult:
-        plan = analyze(query, location=location, state=state)
+    def retrieve(self, query: str, *, location: str | None = None, state: str | None = None, top_k: int | None = None, expand_query: Callable[[str], str] | None = None) -> RetrievalResult:
+        text = query.strip()
+        if not text:
+            raise ValueError("Query cannot be empty")
+        limit = self.top_k if top_k is None else max(1, min(20, int(top_k)))
+        plan = analyze(text, location=location, state=state)
         store = get_store()
         allowed = store.filtered_rows(location=location, state=state)
         variants = expand(plan.query, expand_query) if plan.needs_expansion else [plan.query]
         dense_sets = [dense_search(store, q, self.dense_k, allowed) for q in variants]
         sparse_sets = [sparse_search(store, q, self.sparse_k, allowed) for q in variants]
         fused = fuse([item for results in dense_sets for item in results], [item for results in sparse_sets for item in results], self.fusion_k)
-        ranked = rerank(plan.query, fused, min(self.top_k, len(fused)))
+        ranked = rerank(plan.query, fused, min(limit, len(fused)))
         context, sources = compress(plan.query, ranked)
         return RetrievalResult(plan, ranked, context, sources)
 
