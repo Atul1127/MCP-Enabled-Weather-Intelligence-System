@@ -68,13 +68,7 @@ class WeatherAgent:
             for item in selected
         ]
 
-    async def _reason(
-        self,
-        messages: list[types.Content],
-        declarations: list[types.FunctionDeclaration],
-        plan: dict[str, Any],
-        retry_reason: str | None = None,
-    ):
+    async def _reason(self, messages, declarations, plan, retry_reason=None):
         instruction = (
             "You are the execution-selection layer. Follow the explicit plan and its execution groups. "
             "Use only the MCP capabilities exposed in the current tool declarations. Use MCP tools for "
@@ -83,11 +77,7 @@ class WeatherAgent:
             + str(plan)
         )
         if retry_reason:
-            instruction += (
-                "\n\nVERIFIER FEEDBACK:\n"
-                + retry_reason
-                + "\nCorrect the missing evidence by selecting appropriate MCP tools from the exposed declarations."
-            )
+            instruction += "\n\nVERIFIER FEEDBACK:\n" + retry_reason + "\nCorrect the missing evidence by selecting appropriate MCP tools from the exposed declarations."
         kwargs: dict[str, Any] = {
             "system_instruction": instruction,
             "max_output_tokens": 700,
@@ -137,18 +127,8 @@ class WeatherAgent:
                 plan = decompose(self.planner.build(query))
                 runtime.intent = plan["intent"]
                 runtime.plan = plan
-                runtime.required_tool_groups = [
-                    set(step["preferred_tools"])
-                    for step in plan["steps"]
-                    if step.get("required", True)
-                ]
-                runtime.route = (
-                    "mcp+rag"
-                    if plan["requires_knowledge"] and plan["requires_live_data"]
-                    else "rag"
-                    if plan["requires_knowledge"]
-                    else "mcp"
-                )
+                runtime.required_tool_groups = [set(step["preferred_tools"]) for step in plan["steps"] if step.get("required", True)]
+                runtime.route = "mcp+rag" if plan["requires_knowledge"] and plan["requires_live_data"] else "rag" if plan["requires_knowledge"] else "mcp"
                 if state.get("intent") and state["intent"] != runtime.intent:
                     raise RuntimeError("Router and planner intent disagree")
                 route = capability_router.route_plan(plan)
@@ -158,25 +138,13 @@ class WeatherAgent:
                 if missing:
                     raise RuntimeError(f"MCP plan requires unavailable tools: {', '.join(missing)}")
                 active_declarations = self._declarations(registry, set(route.selected))
-                emit(
-                    "agent.mcp_route",
-                    trace_id=trace_id,
-                    requested=list(route.requested),
-                    selected=list(route.selected),
-                    rejected=list(route.rejected),
-                    execution_groups=plan.get("execution_groups", []),
-                )
+                emit("agent.mcp_route", trace_id=trace_id, requested=list(route.requested), selected=list(route.selected), rejected=list(route.rejected), execution_groups=plan.get("execution_groups", []))
                 return {"plan": plan, "route": runtime.route, "mcp_tools": list(route.selected)}
 
             async def reasoner_node(state: GraphState) -> dict[str, Any]:
                 round_no = int(state.get("rounds", 0)) + 1
                 with span("agent.reason", trace_id=trace_id, round=round_no) as info:
-                    response = await self._reason(
-                        messages,
-                        active_declarations,
-                        runtime.plan,
-                        state.get("retry_reason"),
-                    )
+                    response = await self._reason(messages, active_declarations, runtime.plan, state.get("retry_reason"))
                     calls = list(response.function_calls or [])
                     info.update(tool_calls=len(calls), model=self.model)
                 candidate = response.candidates[0] if response.candidates else None
@@ -193,90 +161,30 @@ class WeatherAgent:
                 response_parts = []
                 for function_call, (name, args, result) in zip(calls, results):
                     runtime.add_observation(name, args, result)
-                    emit(
-                        "agent.tool",
-                        trace_id=trace_id,
-                        tool=name,
-                        success=not (isinstance(result, dict) and result.get("success") is False),
-                        round=int(state.get("rounds", 0)),
-                    )
-                    response_parts.append(
-                        types.Part.from_function_response(
-                            name=name,
-                            response=result if isinstance(result, dict) else {"result": result},
-                            id=getattr(function_call, "id", None),
-                        )
-                    )
+                    emit("agent.tool", trace_id=trace_id, tool=name, success=not (isinstance(result, dict) and result.get("success") is False), round=int(state.get("rounds", 0)))
+                    response_parts.append(types.Part.from_function_response(name=name, response=result if isinstance(result, dict) else {"result": result}, id=getattr(function_call, "id", None)))
                 messages.append(types.Content(role="user", parts=response_parts))
-                return {
-                    "observations": runtime.observations,
-                    "tool_calls": runtime.tool_calls,
-                    "evidence": runtime.evidence_payload(),
-                    "sources": runtime.sources,
-                    "errors": runtime.errors,
-                }
+                return {"observations": runtime.observations, "tool_calls": runtime.tool_calls, "evidence": runtime.evidence_payload(), "sources": runtime.sources, "errors": runtime.errors}
 
             async def verifier_node(state: GraphState) -> dict[str, Any]:
-                verification = self.verifier.verify(
-                    runtime.plan,
-                    runtime.observations,
-                    runtime.evidence_payload(),
-                    runtime.errors,
-                )
+                verification = self.verifier.verify(runtime.plan, runtime.observations, runtime.evidence_payload(), runtime.errors)
                 retry_count = int(state.get("retry_count", 0)) + (0 if verification["sufficient"] else 1)
                 missing = ", ".join("/".join(group) for group in verification.get("missing_capabilities", []))
-                return {
-                    "verification": verification,
-                    "retry_count": retry_count,
-                    "retry_reason": None if verification["sufficient"] else f"Missing required evidence capabilities: {missing}",
-                }
+                return {"verification": verification, "retry_count": retry_count, "retry_reason": None if verification["sufficient"] else f"Missing required evidence capabilities: {missing}"}
 
             async def synthesizer_node(_: GraphState) -> dict[str, Any]:
                 nonlocal structured_response
                 structured_response = await GeminiSynthesizer(self._client_or_raise(), self.model).synthesize_structured(query, runtime)
                 answer, cited_sources = validate_citations(structured_response["answer"], runtime.sources)
                 structured_response["answer"] = answer
+                structured_response["citations"] = [str(source["citation"]) for source in cited_sources if source.get("citation")]
                 if cited_sources:
                     runtime.sources = cited_sources
                 return {"answer": answer}
 
-            graph = build_weather_graph(
-                router=router_node,
-                planner=planner_node,
-                reasoner=reasoner_node,
-                executor=executor_node,
-                verifier=verifier_node,
-                synthesizer=synthesizer_node,
-                max_rounds=self.max_rounds,
-                max_retries=self.max_retries,
-            )
+            graph = build_weather_graph(router=router_node, planner=planner_node, reasoner=reasoner_node, executor=executor_node, verifier=verifier_node, synthesizer=synthesizer_node, max_rounds=self.max_rounds, max_retries=self.max_retries)
             result = await graph.ainvoke({"query": query, "trace_id": trace_id, "rounds": 0, "retry_count": 0})
 
         success = runtime.required_requirements_satisfied
-        emit(
-            "agent.end",
-            trace_id=trace_id,
-            intent=runtime.intent,
-            rounds=result.get("rounds", 0),
-            tools=len(runtime.tool_calls),
-            success=success,
-        )
-        return {
-            "success": success,
-            "answer": result.get("answer", ""),
-            "confidence": structured_response.get("confidence"),
-            "citations": structured_response.get("citations", []),
-            "warnings": structured_response.get("warnings", []),
-            "trace_id": trace_id,
-            "intent": runtime.intent,
-            "route": runtime.route,
-            "plan": runtime.plan,
-            "tool_calls": runtime.tool_calls,
-            "observations": runtime.observations,
-            "evidence": runtime.evidence_payload(),
-            "sources": runtime.sources,
-            "errors": runtime.errors,
-            "rounds": result.get("rounds", 0),
-            "retry_count": result.get("retry_count", 0),
-            "verification": result.get("verification", {}),
-        }
+        emit("agent.end", trace_id=trace_id, intent=runtime.intent, rounds=result.get("rounds", 0), tools=len(runtime.tool_calls), success=success)
+        return {"success": success, "answer": result.get("answer", ""), "confidence": structured_response.get("confidence"), "citations": structured_response.get("citations", []), "warnings": structured_response.get("warnings", []), "trace_id": trace_id, "intent": runtime.intent, "route": runtime.route, "plan": runtime.plan, "tool_calls": runtime.tool_calls, "observations": runtime.observations, "evidence": runtime.evidence_payload(), "sources": runtime.sources, "errors": runtime.errors, "rounds": result.get("rounds", 0), "retry_count": result.get("retry_count", 0), "verification": result.get("verification", {})}
