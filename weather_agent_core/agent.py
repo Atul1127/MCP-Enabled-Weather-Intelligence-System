@@ -66,7 +66,7 @@ class WeatherAgent:
         plan = self.planner.build(query)
         state.intent = plan["intent"]
         state.plan = plan
-        state.required_tool_groups = [set(step["preferred_tools"]) for step in plan["steps"] if step.get("required", True)]
+        state.required_tool_groups = [set(step["preferred_tools"]) for step in plan["steps"] if step.get("required", True) or (plan["requires_knowledge"] and step.get("capability") == "knowledge")]
         state.route = "rag" if plan["requires_knowledge"] and not plan["requires_live_data"] else "mcp+rag" if plan["requires_knowledge"] and plan["requires_live_data"] else "mcp"
         emit("agent.start", trace_id=trace_id, intent=state.intent, route=state.route, model=self.model)
         rounds_used = 0
