@@ -1,21 +1,20 @@
 from weather_agent_core.planner import Planner
 
 
-def test_knowledge_plan_requires_rag_mcp_capability():
+def test_knowledge_plan_requires_both_rag_mcp_capabilities():
     plan = Planner().build("What does precipitation probability actually mean?")
     assert plan["intent"] == "knowledge"
     assert plan["requires_knowledge"] is True
-    knowledge_steps = [
-        step
-        for step in plan["steps"]
-        if step["capability"] == "knowledge"
+
+    required_steps = [
+        step for step in plan["steps"] if step.get("required", True)
     ]
-    assert len(knowledge_steps) == 1
-    assert knowledge_steps[0]["required"] is True
-    assert set(knowledge_steps[0]["preferred_tools"]) == {
-        "search_weather",
-        "ask_weather",
-    }
+    assert [step["preferred_tools"] for step in required_steps] == [
+        ("search_weather",),
+        ("ask_weather",),
+    ]
+    assert all(step["required"] is True for step in required_steps)
+    assert all(step["parallelizable"] is False for step in required_steps)
 
 
 def test_weather_knowledge_benchmark_queries_route_to_knowledge():
@@ -27,8 +26,9 @@ def test_weather_knowledge_benchmark_queries_route_to_knowledge():
         plan = Planner().build(query)
         assert plan["intent"] == "knowledge"
         assert plan["requires_knowledge"] is True
-        knowledge_steps = [
-            step for step in plan["steps"] if step["capability"] == "knowledge"
+        required_tools = [
+            step["preferred_tools"][0]
+            for step in plan["steps"]
+            if step.get("required", True)
         ]
-        assert len(knowledge_steps) == 1
-        assert knowledge_steps[0]["required"] is True
+        assert required_tools == ["search_weather", "ask_weather"]
