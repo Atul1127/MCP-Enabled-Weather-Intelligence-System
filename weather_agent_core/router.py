@@ -11,22 +11,9 @@ import re
 LIVE_MARKERS = ("today", "tomorrow", "now", "right now", "tonight", "this evening", "forecast", "next week", "next few days")
 COMPARISON_MARKERS = ("compare", "versus", " vs ", "between ", "which is better")
 KNOWLEDGE_MARKERS = (
-    "typically",
-    "usually",
-    "what causes",
-    "what does",
-    "why does",
-    "how does",
-    "what is",
-    "what are",
-    "associated with",
-    "meaning of",
-    "mean",
-    "means",
-    "does ... mean",
-    "wmo",
-    "weather code",
-    "uncertainty",
+    "typically", "usually", "what causes", "what does", "why does", "how does",
+    "what is", "what are", "associated with", "meaning of", "mean", "means",
+    "does ... mean", "wmo", "weather code", "weather codes", "uncertainty",
     "future weather claims",
 )
 RISK_MARKERS = ("safe", "risk", "suitable", "should i", "play", "run", "hike", "travel", "outdoor")
@@ -38,7 +25,10 @@ def classify(query: str) -> str:
         return "comparison"
     if any(marker in text for marker in RISK_MARKERS):
         return "activity_risk"
-    if any(marker in text for marker in KNOWLEDGE_MARKERS) and not any(marker in text for marker in LIVE_MARKERS):
+    # Conceptual questions take precedence over generic live markers. For
+    # example, "Why does forecast uncertainty increase..." contains the word
+    # forecast but asks for an explanation, not a live forecast.
+    if any(marker in text for marker in KNOWLEDGE_MARKERS):
         return "knowledge"
     if any(marker in text for marker in LIVE_MARKERS):
         return "live_weather"
