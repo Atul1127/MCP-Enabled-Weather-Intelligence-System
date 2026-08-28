@@ -34,17 +34,13 @@ class EvidenceVerifier:
             if group and not group.intersection(successful_tools)
         ]
 
-        # ``requires_knowledge`` is a routing hint for mixed plans. The
-        # required/optional contract belongs to the individual plan steps.
         required_knowledge = any(
             step.get("required", True)
             and str(step.get("capability", "")).lower() == "knowledge"
             for step in plan.get("steps", [])
         )
-        has_knowledge = bool(
-            {"search_weather", "ask_weather"}.intersection(successful_tools)
-        )
-        if required_knowledge and not has_knowledge:
+        has_knowledge = bool({"search_weather", "ask_weather"}.intersection(successful_tools))
+        if required_knowledge and not has_knowledge and ["search_weather", "ask_weather"] not in missing:
             missing.append(["search_weather", "ask_weather"])
 
         sufficient = (
