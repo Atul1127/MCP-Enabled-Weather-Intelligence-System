@@ -76,6 +76,28 @@ class WeatherAgent:
         ]
 
     @staticmethod
+    def _ensure_required_tool_calls(
+        calls: list[Any],
+        plan: dict[str, Any],
+        query: str,
+    ) -> list[Any]:
+        """Enforce deterministic execution of required RAG capabilities.
+
+        Gemini may choose only one member of a multi-step knowledge plan even
+        when both capabilities are required. The planner/verifier contract is
+        authoritative, so the orchestration layer supplies any missing RAG
+        call instead of spending another model round retrying the same choice.
+        """
+        if plan.get("intent") != "knowledge":
+            return calls
+
+        present = {str(getattr(call, "name", "")) for call in calls}
+        for name in ("search_weather", "ask_weather"):
+            if name not in present:
+                calls.append(types.FunctionCall(name=name, args={"query": query}))
+        return calls
+
+    @staticmethod
     def _function_response_part(
         *,
         name: str,
@@ -218,6 +240,7 @@ class WeatherAgent:
                         state.get("retry_reason"),
                     )
                     calls = list(response.function_calls or [])
+                    calls = self._ensure_required_tool_calls(calls, runtime.plan, query)
                     info.update(tool_calls=len(calls), model=self.model)
 
                 candidate = response.candidates[0] if response.candidates else None
