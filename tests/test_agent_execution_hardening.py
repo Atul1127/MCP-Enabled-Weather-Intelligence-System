@@ -1,5 +1,4 @@
 import asyncio
-from types import SimpleNamespace
 
 import weather_agent_core.executor as executor_module
 from weather_agent_core.executor import MCPExecutor
@@ -17,7 +16,7 @@ class _Session:
     pass
 
 
-def test_executor_deduplicates_identical_calls(monkeypatch):
+def test_executor_deduplicates_identical_calls_within_and_across_rounds(monkeypatch):
     calls = 0
 
     async def fake_call_tool(session, name, args):
@@ -28,14 +27,15 @@ def test_executor_deduplicates_identical_calls(monkeypatch):
 
     monkeypatch.setattr(executor_module, "call_tool", fake_call_tool)
     runner = MCPExecutor(_Session(), {"get_weather"}, max_retries=0)
-    result = asyncio.run(
+    first = asyncio.run(
         runner.execute([
             _Call("get_weather", {"location": "Delhi"}),
             _Call("get_weather", {"location": "Delhi"}),
         ])
     )
+    second = asyncio.run(runner.execute([_Call("get_weather", {"location": "Delhi"})]))
     assert calls == 1
-    assert result[0][2] == result[1][2]
+    assert first[0][2] == first[1][2] == second[0][2]
 
 
 def test_verifier_does_not_fail_for_optional_tool_error():
