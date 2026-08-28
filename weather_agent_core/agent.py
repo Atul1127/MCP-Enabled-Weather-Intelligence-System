@@ -60,12 +60,6 @@ class WeatherAgent:
 
     @staticmethod
     def _ensure_required_tool_calls(calls: list[Any], plan: dict[str, Any], query: str) -> list[Any]:
-        """Ensure each logical required capability has at least one execution path.
-
-        Knowledge is represented as one OR-group: search_weather and ask_weather
-        are interchangeable evidence-retrieval aliases. Never synthesize both
-        calls merely because the planner exposes both names.
-        """
         required_groups = [
             set(step.get("preferred_tools", []))
             for step in plan.get("steps", [])
@@ -161,6 +155,22 @@ class WeatherAgent:
 
                 active_declarations = self._declarations(registry, set(route.selected))
                 emit("agent.mcp_route", trace_id=trace_id, requested=list(route.requested), selected=list(route.selected), rejected=list(route.rejected), execution_groups=plan.get("execution_groups", []))
+
+                # Knowledge/RAG plans are deterministic at this boundary: the
+                # planner has already selected the logical MCP capability. Do
+                # not spend a second Gemini call asking the model to select a
+                # tool that the planner has already determined is required.
+                direct_rag = runtime.route == "rag" and len(runtime.required_tool_groups) == 1
+                if direct_rag:
+                    selected = route.selected[0]
+                    return {
+                        "plan": plan,
+                        "route": runtime.route,
+                        "mcp_tools": list(route.selected),
+                        "next_action": "tool",
+                        "rounds": 0,
+                        "pending_calls": [types.FunctionCall(name=selected, args={"query": query})],
+                    }
                 return {"plan": plan, "route": runtime.route, "mcp_tools": list(route.selected)}
 
             async def reasoner_node(state: GraphState) -> dict[str, Any]:
