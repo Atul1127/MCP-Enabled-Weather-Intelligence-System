@@ -16,6 +16,11 @@ KNOWLEDGE_MARKERS = (
     "does ... mean", "wmo", "weather code", "weather codes", "uncertainty",
     "future weather claims",
 )
+STRONG_CONCEPTUAL_MARKERS = (
+    "typically", "usually", "what causes", "what does", "why does", "how does",
+    "associated with", "meaning of", "does ... mean", "wmo", "weather code",
+    "weather codes", "uncertainty", "future weather claims",
+)
 RISK_MARKERS = ("safe", "risk", "suitable", "should i", "play", "run", "hike", "travel", "outdoor")
 
 
@@ -25,13 +30,15 @@ def classify(query: str) -> str:
         return "comparison"
     if any(marker in text for marker in RISK_MARKERS):
         return "activity_risk"
-    # Conceptual questions take precedence over generic live markers. For
-    # example, "Why does forecast uncertainty increase..." contains the word
-    # forecast but asks for an explanation, not a live forecast.
-    if any(marker in text for marker in KNOWLEDGE_MARKERS):
+    # Strong conceptual markers override live words such as "forecast".
+    # Generic "what is/what are" does not: "What is the forecast for Delhi
+    # tomorrow?" must remain a live-weather request.
+    if any(marker in text for marker in STRONG_CONCEPTUAL_MARKERS):
         return "knowledge"
     if any(marker in text for marker in LIVE_MARKERS):
         return "live_weather"
+    if any(marker in text for marker in KNOWLEDGE_MARKERS):
+        return "knowledge"
     return "weather_intelligence"
 
 
