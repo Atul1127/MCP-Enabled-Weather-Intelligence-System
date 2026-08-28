@@ -39,15 +39,11 @@ class Planner:
         text = query.lower()
         comparison = intent == "comparison"
         risk = intent == "activity_risk"
+        alerts = intent == "alerts"
         knowledge = intent == "knowledge"
-        live = intent in {"live_weather", "activity_risk", "comparison"}
+        live = intent in {"live_weather", "activity_risk", "comparison", "alerts"}
 
         if knowledge:
-            # Retrieval is one logical capability. search_weather and ask_weather
-            # are aliases at the evidence layer, so requiring both would create
-            # duplicate work while pretending that two independent capabilities
-            # are necessary. Prefer search_weather and let the executor/router
-            # select an available knowledge tool.
             steps = (
                 PlanStep(
                     "knowledge",
@@ -57,18 +53,35 @@ class Planner:
                     parallelizable=False,
                 ),
             )
+        elif alerts:
+            # Alerts are a distinct live capability. Do not make alert lookup
+            # optional merely because the query also contains a time phrase such
+            # as "this week" or "next few days".
+            steps = (
+                PlanStep("alerts", "alerts", ("get_weather_alerts",), required=True, parallelizable=False),
+            )
         elif risk:
             steps = (
                 PlanStep("risk", "risk", ("assess_weather_risk",)),
                 PlanStep("alerts", "alerts", ("get_weather_alerts",), required=False),
             )
         elif comparison:
+            # Comparison questions need the capability matching the comparison
+            # target. Outdoor suitability/cricket/risk language means risk;
+            # explicit forecast language means forecast. Keep the knowledge
+            # lookup optional so comparisons do not trigger unnecessary RAG work.
+            risk_comparison = any(
+                marker in text
+                for marker in ("outdoor", "cricket", "run", "safe", "risk", "suitable", "activity")
+            )
+            forecast_comparison = "forecast" in text
+            preferred = (
+                ("assess_weather_risk",)
+                if risk_comparison and not forecast_comparison
+                else ("get_forecast", "get_weather")
+            )
             steps = (
-                PlanStep(
-                    "comparison_evidence",
-                    "comparison_evidence",
-                    ("get_forecast", "get_weather", "assess_weather_risk"),
-                ),
+                PlanStep("comparison_evidence", "comparison_evidence", preferred),
                 PlanStep("comparison_knowledge", "knowledge", ("search_weather",), required=False),
             )
         else:
