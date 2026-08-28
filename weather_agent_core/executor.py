@@ -10,6 +10,7 @@ from mcp_client import call_tool
 from .security import validate_observation, validate_tool_arguments, validate_tool_call
 
 MAX_FUNCTION_CALLS = max(1, int(os.environ.get("WEATHER_MAX_TOOL_CALLS", "8")))
+RAG_TOOLS = frozenset({"search_weather", "ask_weather"})
 
 
 class MCPExecutor:
@@ -18,20 +19,28 @@ class MCPExecutor:
     def __init__(self, session: Any, allowed_tools: set[str], *, timeout_seconds: float | None = None, max_retries: int | None = None) -> None:
         self.session = session
         self.allowed_tools = frozenset(allowed_tools)
-        self.timeout_seconds = float(os.environ.get("WEATHER_MCP_TIMEOUT", "20")) if timeout_seconds is None else float(timeout_seconds)
+        self.timeout_seconds = float(os.environ.get("WEATHER_MCP_TIMEOUT", "60")) if timeout_seconds is None else float(timeout_seconds)
+        self.rag_timeout_seconds = float(os.environ.get("WEATHER_RAG_MCP_TIMEOUT", "90"))
         self.max_retries = int(os.environ.get("WEATHER_MCP_RETRIES", "2")) if max_retries is None else int(max_retries)
         self._successful_results: dict[str, Any] = {}
-        if self.timeout_seconds <= 0:
+        if self.timeout_seconds <= 0 or self.rag_timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         if self.max_retries < 0:
             raise ValueError("max_retries cannot be negative")
 
     async def _call_with_retry(self, name: str, args: dict[str, Any]) -> Any:
         last_error: Exception | None = None
+        timeout = self.rag_timeout_seconds if name in RAG_TOOLS else self.timeout_seconds
         for attempt in range(self.max_retries + 1):
             try:
-                return await asyncio.wait_for(call_tool(self.session, name, args), timeout=self.timeout_seconds)
+                return await asyncio.wait_for(call_tool(self.session, name, args), timeout=timeout)
             except asyncio.CancelledError:
+                raise
+            except asyncio.TimeoutError:
+                # Do not retry a timed-out MCP call. The MCP SDK versions used by
+                # this project may leave the server-side request running after
+                # client cancellation; retrying would create duplicate expensive
+                # RAG jobs and can multiply latency dramatically.
                 raise
             except Exception as exc:
                 last_error = exc
@@ -99,7 +108,8 @@ class MCPExecutor:
             except ValueError as exc:
                 return name, args, {"success": False, "error": str(exc), "error_type": "validation_error"}
             except asyncio.TimeoutError:
-                return name, args, {"success": False, "error": f"MCP tool '{name}' timed out after {self.timeout_seconds:g}s.", "error_type": "timeout"}
+                timeout = self.rag_timeout_seconds if name in RAG_TOOLS else self.timeout_seconds
+                return name, args, {"success": False, "error": f"MCP tool '{name}' timed out after {timeout:g}s.", "error_type": "timeout"}
             except asyncio.CancelledError:
                 raise
             except Exception:
