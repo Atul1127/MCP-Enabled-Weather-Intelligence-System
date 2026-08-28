@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from typing import Any
 
 from mcp_client import call_tool
 from .security import validate_observation, validate_tool_arguments, validate_tool_call
 
-MAX_FUNCTION_CALLS = max(1, int(os.environ.get("WEATHER_MAX_TOOL_CALLS", "16")))
+MAX_FUNCTION_CALLS = max(1, int(os.environ.get("WEATHER_MAX_TOOL_CALLS", "8")))
 
 
 class MCPExecutor:
@@ -49,29 +50,60 @@ class MCPExecutor:
             }
         return result
 
+    @staticmethod
+    def _key(name: str, args: dict[str, Any]) -> str:
+        """Stable logical identity for one tool invocation."""
+        return json.dumps([name, args], sort_keys=True, separators=(",", ":"), default=str)
+
     async def execute(self, function_calls: list[Any]) -> list[tuple[str, dict[str, Any], Any]]:
-        batch_exceeded = len(function_calls) > MAX_FUNCTION_CALLS
+        if len(function_calls) > MAX_FUNCTION_CALLS:
+            # Fail the whole batch before executing anything. Partial execution
+            # followed by a policy error makes recovery nondeterministic.
+            return [
+                (
+                    str(call.name),
+                    dict(call.args or {}),
+                    {
+                        "success": False,
+                        "error": f"Too many tool calls in one round; maximum is {MAX_FUNCTION_CALLS}.",
+                        "error_type": "policy_denied",
+                    },
+                )
+                for call in function_calls
+            ]
+
+        in_flight: dict[str, asyncio.Task[Any]] = {}
+        completed: dict[str, Any] = {}
 
         async def one(call: Any) -> tuple[str, dict[str, Any], Any]:
             name, args = str(call.name), dict(call.args or {})
-            if batch_exceeded:
-                return name, args, {
-                    "success": False,
-                    "error": f"Too many tool calls in one round; maximum is {MAX_FUNCTION_CALLS}.",
-                    "error_type": "policy_denied",
-                }
             if name not in self.allowed_tools:
                 return name, args, {"success": False, "error": f"Tool '{name}' is not allowed.", "error_type": "policy_denied"}
             try:
                 validate_tool_arguments(args)
                 validate_tool_call(name, args)
-                result = await self._call_with_retry(name, args)
+                key = self._key(name, args)
+                if key in completed:
+                    return name, args, completed[key]
+                task = in_flight.get(key)
+                if task is None:
+                    task = asyncio.create_task(self._call_with_retry(name, args))
+                    in_flight[key] = task
+                try:
+                    result = await task
+                finally:
+                    if key in in_flight and in_flight[key].done():
+                        in_flight.pop(key, None)
                 validate_observation(result)
-                return name, args, self._sanitize_result(result)
+                result = self._sanitize_result(result)
+                completed[key] = result
+                return name, args, result
             except ValueError as exc:
                 return name, args, {"success": False, "error": str(exc), "error_type": "validation_error"}
             except asyncio.TimeoutError:
                 return name, args, {"success": False, "error": f"MCP tool '{name}' timed out after {self.timeout_seconds:g}s.", "error_type": "timeout"}
+            except asyncio.CancelledError:
+                raise
             except Exception:
                 return name, args, {"success": False, "error": "MCP tool execution failed.", "error_type": "execution_error"}
 
