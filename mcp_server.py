@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from datetime import datetime
-from threading import Lock
+from threading import Event, Lock
 from typing import Any
 import copy
 import json
@@ -23,13 +23,10 @@ from observability import emit, span
 
 mcp = MCPServer("indian-weather-intelligence")
 
-# search_weather and ask_weather are separate MCP capabilities, but both
-# intentionally consume the same retrieval result for an identical request.
-# This prevents running dense retrieval, BM25 fusion, reranking and context
-# compression twice during a knowledge plan that requires both capabilities.
 _RAG_CACHE_MAX = max(1, int(os.environ.get("WEATHER_RAG_CACHE_SIZE", "32")))
 _RAG_CACHE: OrderedDict[tuple[Any, ...], dict[str, Any]] = OrderedDict()
 _RAG_CACHE_LOCK = Lock()
+_RAG_INFLIGHT: dict[tuple[Any, ...], Event] = {}
 _RAG_PIPELINE: Any = None
 _RAG_PIPELINE_LOCK = Lock()
 
@@ -45,35 +42,34 @@ def _rag_pipeline() -> Any:
     return _RAG_PIPELINE
 
 
-def _rag_cache_key(
-    query: str,
-    top_k: int,
-    location: str | None,
-    state: str | None,
-) -> tuple[Any, ...]:
-    return (query, int(top_k), location, state)
+def _rag_cache_key(query: str, top_k: int, location: str | None, state: str | None) -> tuple[Any, ...]:
+    return (query.strip(), int(top_k), location.strip() if location else None, state.strip() if state else None)
 
 
-def _retrieve_weather_knowledge(
-    query: str,
-    top_k: int,
-    location: str | None,
-    state: str | None,
-) -> dict[str, Any]:
-    """Retrieve once and reuse identical grounded evidence."""
+def _retrieve_weather_knowledge(query: str, top_k: int, location: str | None, state: str | None) -> dict[str, Any]:
+    """Retrieve once per logical key; concurrent callers share one computation."""
     key = _rag_cache_key(query, top_k, location, state)
-    with _RAG_CACHE_LOCK:
-        cached = _RAG_CACHE.get(key)
-        if cached is not None:
-            _RAG_CACHE.move_to_end(key)
-            return copy.deepcopy(cached)
 
-        result = _rag_pipeline().retrieve(
-            query,
-            location=location,
-            state=state,
-            top_k=top_k,
-        )
+    while True:
+        with _RAG_CACHE_LOCK:
+            cached = _RAG_CACHE.get(key)
+            if cached is not None:
+                _RAG_CACHE.move_to_end(key)
+                return copy.deepcopy(cached)
+            waiter = _RAG_INFLIGHT.get(key)
+            if waiter is None:
+                waiter = Event()
+                _RAG_INFLIGHT[key] = waiter
+                leader = True
+            else:
+                leader = False
+
+        if leader:
+            break
+        waiter.wait()
+
+    try:
+        result = _rag_pipeline().retrieve(query, location=location, state=state, top_k=top_k)
         payload = {
             "success": True,
             "query": query,
@@ -82,11 +78,17 @@ def _retrieve_weather_knowledge(
             "context": result.context,
             "sources": result.sources,
         }
-        _RAG_CACHE[key] = copy.deepcopy(payload)
-        _RAG_CACHE.move_to_end(key)
-        while len(_RAG_CACHE) > _RAG_CACHE_MAX:
-            _RAG_CACHE.popitem(last=False)
+        with _RAG_CACHE_LOCK:
+            _RAG_CACHE[key] = copy.deepcopy(payload)
+            _RAG_CACHE.move_to_end(key)
+            while len(_RAG_CACHE) > _RAG_CACHE_MAX:
+                _RAG_CACHE.popitem(last=False)
         return copy.deepcopy(payload)
+    finally:
+        with _RAG_CACHE_LOCK:
+            waiter = _RAG_INFLIGHT.pop(key, None)
+            if waiter is not None:
+                waiter.set()
 
 
 @mcp.resource("weather://capabilities")
@@ -241,7 +243,7 @@ def search_weather(query: str, top_k: int = 5, location: str | None = None, stat
 
 @mcp.tool()
 def ask_weather(query: str, top_k: int = 5, location: str | None = None, state: str | None = None) -> dict[str, Any]:
-    """Retrieve the same grounded weather knowledge evidence; generation is handled by the agent synthesizer."""
+    """Retrieve grounded weather knowledge evidence; generation is handled by the agent synthesizer."""
     query = query.strip() if query else ""
     if not query: return {"success": False, "error": "query cannot be empty"}
     with span("mcp.ask_weather", trace_id="unknown", tool="ask_weather") as info:
