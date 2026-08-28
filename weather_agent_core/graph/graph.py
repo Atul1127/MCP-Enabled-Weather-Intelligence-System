@@ -18,9 +18,9 @@ def build_weather_graph(
 ):
     """Compile Router -> Planner -> Reasoner <-> MCP -> Verify -> Synthesize.
 
-    ``verifier`` is optional for backwards compatibility with lightweight
-    graph callers/tests. Production agents should always provide the real
-    verifier so insufficient evidence can trigger bounded recovery.
+    The executor goes directly to verification once all required plan groups are
+    satisfied. This prevents an unnecessary Gemini round after a successful tool
+    batch while retaining the reasoner loop when required evidence is missing.
     """
     if max_rounds < 1 or max_retries < 0:
         raise ValueError("max_rounds must be >= 1 and max_retries must be >= 0")
@@ -44,16 +44,35 @@ def build_weather_graph(
             return "executor"
         return "verifier"
 
+    def after_executor(state: GraphState) -> str:
+        """Verify immediately when the current batch already covers the plan."""
+        plan = state.get("plan") or {}
+        observations = state.get("observations") or []
+        successful = {
+            str(item.get("tool"))
+            for item in observations
+            if item.get("tool")
+            and not (isinstance(item.get("result"), dict) and item["result"].get("success") is False)
+        }
+        required_groups = [
+            set(step.get("preferred_tools", []))
+            for step in plan.get("steps", [])
+            if step.get("required", True)
+        ]
+        satisfied = all(not group or group.intersection(successful) for group in required_groups)
+        return "verifier" if satisfied else "reasoner"
+
     def after_verifier(state: GraphState) -> str:
         verification = state.get("verification") or {}
         if verification.get("sufficient"):
             return "synthesizer"
-        if int(state.get("retry_count", 0)) < max_retries and int(state.get("rounds", 0)) < max_rounds:
+        retry_count = int(state.get("retry_count", 0))
+        if retry_count <= max_retries and int(state.get("rounds", 0)) < max_rounds:
             return "reasoner"
         return "synthesizer"
 
     graph.add_conditional_edges("reasoner", after_reasoner, {"executor": "executor", "verifier": "verifier"})
-    graph.add_edge("executor", "reasoner")
+    graph.add_conditional_edges("executor", after_executor, {"reasoner": "reasoner", "verifier": "verifier"})
     graph.add_conditional_edges("verifier", after_verifier, {"reasoner": "reasoner", "synthesizer": "synthesizer"})
     graph.add_edge("synthesizer", END)
     return graph.compile()
