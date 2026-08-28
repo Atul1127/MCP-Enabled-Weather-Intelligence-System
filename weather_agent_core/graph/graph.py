@@ -1,6 +1,8 @@
 """Advanced LangGraph orchestration with verification and bounded recovery."""
 from __future__ import annotations
+
 from typing import Any, Awaitable, Callable
+
 from .state import GraphState
 
 Node = Callable[[GraphState], Awaitable[dict[str, Any]]]
@@ -18,9 +20,10 @@ def build_weather_graph(
 ):
     """Compile Router -> Planner -> Reasoner <-> MCP -> Verify -> Synthesize.
 
-    The executor goes directly to verification once all required plan groups are
-    satisfied. This prevents an unnecessary Gemini round after a successful tool
-    batch while retaining the reasoner loop when required evidence is missing.
+    The executor goes directly to verification once a non-empty required plan is
+    covered by the current observations. If there is no required plan (for
+    example, in a compatibility/unit-test graph), execution returns to the
+    reasoner so the normal state-machine contract is preserved.
     """
     if max_rounds < 1 or max_retries < 0:
         raise ValueError("max_rounds must be >= 1 and max_retries must be >= 0")
@@ -45,7 +48,7 @@ def build_weather_graph(
         return "verifier"
 
     def after_executor(state: GraphState) -> str:
-        """Verify immediately when the current batch already covers the plan."""
+        """Verify immediately only when a real required plan is satisfied."""
         plan = state.get("plan") or {}
         observations = state.get("observations") or []
         successful = {
@@ -59,7 +62,9 @@ def build_weather_graph(
             for step in plan.get("steps", [])
             if step.get("required", True)
         ]
-        satisfied = all(not group or group.intersection(successful) for group in required_groups)
+        satisfied = bool(required_groups) and all(
+            group.intersection(successful) for group in required_groups if group
+        )
         return "verifier" if satisfied else "reasoner"
 
     def after_verifier(state: GraphState) -> str:
