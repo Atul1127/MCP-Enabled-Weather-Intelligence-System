@@ -42,6 +42,11 @@ class RAGPipeline:
             raise ValueError("mmr_lambda must be between 0 and 1")
         self.dense_k, self.sparse_k, self.fusion_k, self.top_k = dense_k, sparse_k, fusion_k, top_k
         self.mmr_lambda = mmr_lambda
+        # The bundled knowledge base is tiny. Loading a transformer merely to
+        # embed a handful of rows can dominate end-to-end MCP latency. Dense
+        # retrieval remains available for larger corpora and can be forced on
+        # with WEATHER_RAG_DENSE=1.
+        self.dense_enabled = os.environ.get("WEATHER_RAG_DENSE", "auto").strip().lower()
 
     @staticmethod
     def _gemini_expand(query: str) -> str:
@@ -58,6 +63,15 @@ class RAGPipeline:
             "role": "user",
             "content": query,
         }], temperature=0.0)
+
+    def _should_use_dense(self, store: Any) -> bool:
+        if self.dense_enabled in {"0", "false", "off", "no"}:
+            return False
+        if self.dense_enabled in {"1", "true", "on", "yes"}:
+            return True
+        # Auto mode is optimized for the bundled local KB while retaining the
+        # full hybrid path automatically for production-sized corpora.
+        return len(getattr(store, "rows", ())) > 50
 
     def retrieve(
         self,
@@ -83,13 +97,21 @@ class RAGPipeline:
             generator = self._gemini_expand
         variants = expand(plan.query, generator) if plan.needs_expansion else [plan.query]
         variants = list(dict.fromkeys([v.strip() for v in variants if v and v.strip()])) or [plan.query]
-        dense_sets = [dense_search(store, q, self.dense_k, allowed) for q in variants]
+
         sparse_sets = [sparse_search(store, q, self.sparse_k, allowed) for q in variants]
-        fused = fuse(
-            [item for results in dense_sets for item in results],
-            [item for results in sparse_sets for item in results],
-            self.fusion_k,
-        )
+        if self._should_use_dense(store):
+            dense_sets = [dense_search(store, q, self.dense_k, allowed) for q in variants]
+            fused = fuse(
+                [item for results in dense_sets for item in results],
+                [item for results in sparse_sets for item in results],
+                self.fusion_k,
+            )
+        else:
+            # For a tiny corpus BM25 already scores the complete allowed set.
+            # Keep the same fusion contract but avoid loading the heavyweight
+            # sentence-transformer embedding model just to create a query vector.
+            fused = sparse_sets[0][:self.fusion_k] if sparse_sets else []
+
         rerank_candidates = fused[:max(limit, min(self.fusion_k, limit * 2))]
         ranked = rerank(plan.query, rerank_candidates, min(len(rerank_candidates), max(limit, 2)))
         selected = select_mmr(ranked, limit, lambda_mult=self.mmr_lambda)
