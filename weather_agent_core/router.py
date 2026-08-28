@@ -24,6 +24,10 @@ KNOWLEDGE_MARKERS = (
     "mean",
     "means",
     "does ... mean",
+    "wmo",
+    "weather code",
+    "uncertainty",
+    "future weather claims",
 )
 RISK_MARKERS = ("safe", "risk", "suitable", "should i", "play", "run", "hike", "travel", "outdoor")
 
