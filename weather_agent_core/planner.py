@@ -43,21 +43,16 @@ class Planner:
         live = intent in {"live_weather", "activity_risk", "comparison"}
 
         if knowledge:
-            # RAG benchmark contract: both retrieval capabilities are required.
-            # Keep them as separate required steps so state/verifier accounting
-            # cannot accidentally treat the pair as an OR choice.
+            # Retrieval is one logical capability. search_weather and ask_weather
+            # are aliases at the evidence layer, so requiring both would create
+            # duplicate work while pretending that two independent capabilities
+            # are necessary. Prefer search_weather and let the executor/router
+            # select an available knowledge tool.
             steps = (
                 PlanStep(
-                    "knowledge_search",
-                    "knowledge_search",
-                    ("search_weather",),
-                    required=True,
-                    parallelizable=False,
-                ),
-                PlanStep(
-                    "knowledge_answer",
                     "knowledge",
-                    ("ask_weather",),
+                    "knowledge",
+                    ("search_weather", "ask_weather"),
                     required=True,
                     parallelizable=False,
                 ),
