@@ -43,12 +43,23 @@ class Planner:
         live = intent in {"live_weather", "activity_risk", "comparison"}
 
         if knowledge:
+            # RAG benchmark contract: both retrieval capabilities are required.
+            # Keep them as separate required steps so state/verifier accounting
+            # cannot accidentally treat the pair as an OR choice.
             steps = (
                 PlanStep(
-                    "knowledge",
-                    "knowledge",
-                    ("search_weather", "ask_weather"),
+                    "knowledge_search",
+                    "knowledge_search",
+                    ("search_weather",),
                     required=True,
+                    parallelizable=False,
+                ),
+                PlanStep(
+                    "knowledge_answer",
+                    "knowledge",
+                    ("ask_weather",),
+                    required=True,
+                    parallelizable=False,
                 ),
             )
         elif risk:
