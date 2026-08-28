@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-import re
 
 from .router import classify
 
@@ -45,7 +44,12 @@ class Planner:
 
         if knowledge:
             steps = (
-                PlanStep("knowledge", "knowledge", ("search_weather", "ask_weather")),
+                PlanStep(
+                    "knowledge",
+                    "knowledge",
+                    ("search_weather", "ask_weather"),
+                    required=True,
+                ),
             )
         elif risk:
             steps = (
@@ -54,18 +58,24 @@ class Planner:
             )
         elif comparison:
             steps = (
-                PlanStep("comparison_evidence", "comparison_evidence", ("get_forecast", "get_weather", "assess_weather_risk")),
+                PlanStep(
+                    "comparison_evidence",
+                    "comparison_evidence",
+                    ("get_forecast", "get_weather", "assess_weather_risk"),
+                ),
                 PlanStep("comparison_knowledge", "knowledge", ("search_weather",), required=False),
             )
         else:
-            preferred = ("get_forecast", "get_weather") if any(x in text for x in ("forecast", "tomorrow", "next week")) else ("get_weather", "get_forecast")
+            preferred = (
+                ("get_forecast", "get_weather")
+                if any(x in text for x in ("forecast", "tomorrow", "next week"))
+                else ("get_weather", "get_forecast")
+            )
             steps = (
                 PlanStep("live_weather", "live_weather", preferred),
                 PlanStep("hazards", "alerts", ("get_weather_alerts",), required=False),
             )
 
-        # The planner is deliberately deterministic and inspectable. Gemini
-        # remains the reasoning layer that chooses concrete calls/arguments.
         plan = ExecutionPlan(
             intent=intent,
             steps=steps,
