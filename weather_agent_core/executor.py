@@ -20,6 +20,7 @@ class MCPExecutor:
         self.allowed_tools = frozenset(allowed_tools)
         self.timeout_seconds = float(os.environ.get("WEATHER_MCP_TIMEOUT", "20")) if timeout_seconds is None else float(timeout_seconds)
         self.max_retries = int(os.environ.get("WEATHER_MCP_RETRIES", "2")) if max_retries is None else int(max_retries)
+        self._successful_results: dict[str, Any] = {}
         if self.timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         if self.max_retries < 0:
@@ -57,23 +58,16 @@ class MCPExecutor:
 
     async def execute(self, function_calls: list[Any]) -> list[tuple[str, dict[str, Any], Any]]:
         if len(function_calls) > MAX_FUNCTION_CALLS:
-            # Fail the whole batch before executing anything. Partial execution
-            # followed by a policy error makes recovery nondeterministic.
             return [
                 (
                     str(call.name),
                     dict(call.args or {}),
-                    {
-                        "success": False,
-                        "error": f"Too many tool calls in one round; maximum is {MAX_FUNCTION_CALLS}.",
-                        "error_type": "policy_denied",
-                    },
+                    {"success": False, "error": f"Too many tool calls in one round; maximum is {MAX_FUNCTION_CALLS}.", "error_type": "policy_denied"},
                 )
                 for call in function_calls
             ]
 
         in_flight: dict[str, asyncio.Task[Any]] = {}
-        completed: dict[str, Any] = {}
 
         async def one(call: Any) -> tuple[str, dict[str, Any], Any]:
             name, args = str(call.name), dict(call.args or {})
@@ -83,8 +77,10 @@ class MCPExecutor:
                 validate_tool_arguments(args)
                 validate_tool_call(name, args)
                 key = self._key(name, args)
-                if key in completed:
-                    return name, args, completed[key]
+                cached = self._successful_results.get(key)
+                if cached is not None:
+                    return name, args, cached
+
                 task = in_flight.get(key)
                 if task is None:
                     task = asyncio.create_task(self._call_with_retry(name, args))
@@ -94,9 +90,11 @@ class MCPExecutor:
                 finally:
                     if key in in_flight and in_flight[key].done():
                         in_flight.pop(key, None)
+
                 validate_observation(result)
                 result = self._sanitize_result(result)
-                completed[key] = result
+                if not (isinstance(result, dict) and result.get("success") is False):
+                    self._successful_results[key] = result
                 return name, args, result
             except ValueError as exc:
                 return name, args, {"success": False, "error": str(exc), "error_type": "validation_error"}
