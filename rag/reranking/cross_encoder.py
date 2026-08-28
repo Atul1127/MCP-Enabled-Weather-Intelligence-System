@@ -1,18 +1,22 @@
 """Cross-encoder reranking implementation."""
 from __future__ import annotations
 import os
+from threading import Lock
 from typing import Any
 from sentence_transformers import CrossEncoder
 
 MODEL = os.environ.get("WEATHER_RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
 MIN_CANDIDATES = int(os.environ.get("WEATHER_RERANK_MIN_CANDIDATES", "2"))
 _model: CrossEncoder | None = None
+_model_lock = Lock()
 
 
 def _get_model() -> CrossEncoder:
     global _model
     if _model is None:
-        _model = CrossEncoder(MODEL)
+        with _model_lock:
+            if _model is None:
+                _model = CrossEncoder(MODEL)
     return _model
 
 
