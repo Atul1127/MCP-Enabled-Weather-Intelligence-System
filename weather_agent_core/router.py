@@ -14,6 +14,7 @@ KNOWLEDGE_MARKERS = (
     "typically",
     "usually",
     "what causes",
+    "what does",
     "why does",
     "how does",
     "what is",
@@ -31,13 +32,8 @@ def classify(query: str) -> str:
     text = query.lower().strip()
     if any(marker in text for marker in COMPARISON_MARKERS):
         return "comparison"
-    # Risk intent takes precedence over generic future/live markers because
-    # questions such as "is cricket safe tomorrow?" need the risk tool.
     if any(marker in text for marker in RISK_MARKERS):
         return "activity_risk"
-    # Conceptual/definition questions should use the knowledge/RAG path.
-    # Avoid broadening this into every "what is" query when the user clearly
-    # asks for live weather.
     if any(marker in text for marker in KNOWLEDGE_MARKERS) and not any(marker in text for marker in LIVE_MARKERS):
         return "knowledge"
     if any(marker in text for marker in LIVE_MARKERS):
