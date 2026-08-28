@@ -10,6 +10,11 @@ import re
 
 LIVE_MARKERS = ("today", "tomorrow", "now", "right now", "tonight", "this evening", "forecast", "next week", "next few days")
 COMPARISON_MARKERS = ("compare", "versus", " vs ", "between ", "which is better")
+ALERT_MARKERS = (
+    "weather alert", "weather alerts", "weather hazard", "weather hazards",
+    "dangerous weather", "actionable weather hazard", "actionable weather hazards",
+    "dangerous weather alert", "dangerous weather alerts",
+)
 KNOWLEDGE_MARKERS = (
     "typically", "usually", "what causes", "what does", "why does", "how does",
     "what is", "what are", "associated with", "meaning of", "mean", "means",
@@ -45,6 +50,8 @@ def classify(query: str) -> str:
         return "comparison"
     if _any_marker(text, RISK_MARKERS):
         return "activity_risk"
+    if _any_marker(text, ALERT_MARKERS):
+        return "alerts"
     # Strong conceptual markers override live words such as "forecast".
     # Generic "what is/what are" does not: "What is the forecast for Delhi
     # tomorrow?" must remain a live-weather request.
