@@ -18,12 +18,11 @@ def build_weather_graph(
     synthesizer: Node, verifier: Node | None = None,
     max_rounds: int = 4, max_retries: int = 1,
 ):
-    """Compile Router -> Planner -> Reasoner <-> MCP -> Verify -> Synthesize.
+    """Compile Router -> Planner -> optional direct MCP -> Reasoner <-> MCP -> Verify -> Synthesize.
 
-    The executor goes directly to verification once a non-empty required plan is
-    covered by the current observations. If there is no required plan (for
-    example, in a compatibility/unit-test graph), execution returns to the
-    reasoner so the normal state-machine contract is preserved.
+    Deterministic plans may set ``next_action=tool`` and ``pending_calls`` in the
+    planner result. Those plans bypass the model-backed execution-selection round.
+    Normal/agentic plans continue through the reasoner exactly as before.
     """
     if max_rounds < 1 or max_retries < 0:
         raise ValueError("max_rounds must be >= 1 and max_retries must be >= 0")
@@ -40,7 +39,13 @@ def build_weather_graph(
         graph.add_node(name, node)
     graph.add_edge(START, "router")
     graph.add_edge("router", "planner")
-    graph.add_edge("planner", "reasoner")
+
+    def after_planner(state: GraphState) -> str:
+        if state.get("next_action") == "tool" and state.get("pending_calls"):
+            return "executor"
+        return "reasoner"
+
+    graph.add_conditional_edges("planner", after_planner, {"executor": "executor", "reasoner": "reasoner"})
 
     def after_reasoner(state: GraphState) -> str:
         if state.get("next_action") == "tool" and int(state.get("rounds", 0)) < max_rounds:
