@@ -10,7 +10,20 @@ import re
 
 LIVE_MARKERS = ("today", "tomorrow", "now", "right now", "tonight", "this evening", "forecast", "next week", "next few days")
 COMPARISON_MARKERS = ("compare", "versus", " vs ", "between ", "which is better")
-KNOWLEDGE_MARKERS = ("typically", "usually", "what causes", "why does", "how does", "what is", "what are", "associated with", "meaning of")
+KNOWLEDGE_MARKERS = (
+    "typically",
+    "usually",
+    "what causes",
+    "why does",
+    "how does",
+    "what is",
+    "what are",
+    "associated with",
+    "meaning of",
+    "mean",
+    "means",
+    "does ... mean",
+)
 RISK_MARKERS = ("safe", "risk", "suitable", "should i", "play", "run", "hike", "travel", "outdoor")
 
 
@@ -22,6 +35,9 @@ def classify(query: str) -> str:
     # questions such as "is cricket safe tomorrow?" need the risk tool.
     if any(marker in text for marker in RISK_MARKERS):
         return "activity_risk"
+    # Conceptual/definition questions should use the knowledge/RAG path.
+    # Avoid broadening this into every "what is" query when the user clearly
+    # asks for live weather.
     if any(marker in text for marker in KNOWLEDGE_MARKERS) and not any(marker in text for marker in LIVE_MARKERS):
         return "knowledge"
     if any(marker in text for marker in LIVE_MARKERS):
