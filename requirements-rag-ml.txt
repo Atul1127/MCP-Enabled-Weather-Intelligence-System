@@ -1,0 +1,4 @@
+# Optional dependencies for dense retrieval and cross-encoder reranking.
+# The production API does not install these for the bundled small local corpus.
+sentence-transformers>=3.0.0
+torch>=2.1.0
