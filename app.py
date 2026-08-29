@@ -40,7 +40,30 @@ def dashboard():
 
 @app.route("/healthz", methods=["GET"])
 def healthz():
+    """Liveness probe: only confirms that the HTTP process is running."""
     return jsonify({"status": "ok", "service": "indian-weather-rag"})
+
+
+@app.route("/readyz", methods=["GET"])
+def readyz():
+    """Readiness probe for dependencies required by the main API path.
+
+    External APIs are intentionally not probed here because readiness should
+    remain fast and deterministic; transient provider failures are handled by
+    the request-level retry/error paths.
+    """
+    checks = {
+        "gemini_api_key": bool(os.environ.get("GEMINI_API_KEY")),
+        "rag_store": False,
+    }
+    try:
+        rag_service.get_rag_pipeline()
+        checks["rag_store"] = True
+    except Exception:
+        logger.exception("RAG readiness check failed")
+
+    ready = all(checks.values())
+    return jsonify({"status": "ready" if ready else "not_ready", "checks": checks}), 200 if ready else 503
 
 
 @app.route("/weather/current", methods=["POST"])
