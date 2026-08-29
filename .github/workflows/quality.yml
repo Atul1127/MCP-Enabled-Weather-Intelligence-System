@@ -20,6 +20,8 @@ jobs:
         run: python -m pip check
       - name: Compile Python modules
         run: python -m compileall -q .
+      - name: Validate production configuration
+        run: python scripts/validate_production_config.py
       - name: Validate Docker Compose configuration
         run: |
           GEMINI_API_KEY=ci-placeholder docker compose config --quiet
