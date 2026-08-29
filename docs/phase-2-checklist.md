@@ -9,11 +9,11 @@
 - [x] Docker configuration aligned with current Gemini defaults
 - [x] Document security and secret-handling requirements
 - [x] Record final E2E and latency reference metrics
+- [x] Polish README for portfolio/demo use
 
 ## Next phase
 
-- [ ] Add a polished project architecture overview
-- [ ] Add representative request/response examples
 - [ ] Add CI validation for tests and configuration
 - [ ] Add deployment guidance for a hosted environment
 - [ ] Prepare portfolio/resume project summary
+- [ ] Prepare screenshots/demo assets
