@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
-from .router import classify
+from .router import classify, is_simple_current
 
 
 @dataclass(frozen=True)
@@ -41,22 +41,14 @@ class Planner:
         risk = intent == "activity_risk"
         alerts = intent == "alerts"
         knowledge = intent == "knowledge"
-        live = intent in {"live_weather", "activity_risk", "comparison", "alerts"}
+        current = is_simple_current(query)
+        live = intent in {"live_weather", "activity_risk", "comparison", "alerts"} or current
 
         if knowledge:
             steps = (
-                PlanStep(
-                    "knowledge",
-                    "knowledge",
-                    ("search_weather", "ask_weather"),
-                    required=True,
-                    parallelizable=False,
-                ),
+                PlanStep("knowledge", "knowledge", ("search_weather", "ask_weather"), required=True, parallelizable=False),
             )
         elif alerts:
-            # Alerts are a distinct live capability. Do not make alert lookup
-            # optional merely because the query also contains a time phrase such
-            # as "this week" or "next few days".
             steps = (
                 PlanStep("alerts", "alerts", ("get_weather_alerts",), required=True, parallelizable=False),
             )
@@ -66,10 +58,6 @@ class Planner:
                 PlanStep("alerts", "alerts", ("get_weather_alerts",), required=False),
             )
         elif comparison:
-            # Comparison questions need the capability matching the comparison
-            # target. Outdoor suitability/cricket/risk language means risk;
-            # explicit forecast language means forecast. Keep the knowledge
-            # lookup optional so comparisons do not trigger unnecessary RAG work.
             risk_comparison = any(
                 marker in text
                 for marker in ("outdoor", "cricket", "run", "safe", "risk", "suitable", "activity")
@@ -83,6 +71,10 @@ class Planner:
             steps = (
                 PlanStep("comparison_evidence", "comparison_evidence", preferred),
                 PlanStep("comparison_knowledge", "knowledge", ("search_weather",), required=False),
+            )
+        elif current:
+            steps = (
+                PlanStep("current_weather", "current_weather", ("get_weather",), required=True),
             )
         else:
             preferred = (
