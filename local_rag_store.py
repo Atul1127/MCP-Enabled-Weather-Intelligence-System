@@ -1,7 +1,8 @@
 """Local file-backed retrieval store for zero-cost development.
 
-The store and embedding model are process-level singletons. This avoids
-rebuilding the BM25 index and dense corpus embeddings on every MCP request.
+The store and embedding model are process-level singletons. BM25 is always
+available; the embedding model and NumPy are loaded lazily only when dense
+retrieval is actually requested.
 """
 from __future__ import annotations
 
@@ -11,9 +12,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
-import numpy as np
 from rank_bm25 import BM25Okapi
-from sentence_transformers import SentenceTransformer
 
 EMBEDDING_MODEL = os.environ.get(
     "WEATHER_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
@@ -22,15 +21,16 @@ CORPUS_PATH = Path(
     os.environ.get("WEATHER_LOCAL_RAG_CORPUS", "data/weather_knowledge.jsonl")
 )
 
-_model: SentenceTransformer | None = None
+_model = None
 _store: "LocalRagStore | None" = None
 _model_lock = Lock()
 _store_lock = Lock()
 
 
-def _get_model() -> SentenceTransformer:
+def _get_model():
     global _model
     if _model is None:
+        from sentence_transformers import SentenceTransformer
         with _model_lock:
             if _model is None:
                 _model = SentenceTransformer(EMBEDDING_MODEL)
@@ -46,14 +46,7 @@ class LocalRagStore:
         self.texts = [self._search_text(row) for row in self.rows]
         self.tokens = [self._tokenize(text) for text in self.texts]
         self.bm25 = BM25Okapi(self.tokens)
-        self.embeddings = np.asarray(
-            _get_model().encode(
-                self.texts,
-                normalize_embeddings=True,
-                show_progress_bar=False,
-            ),
-            dtype=np.float32,
-        )
+        self.embeddings = None
 
     @staticmethod
     def _load(path: Path) -> list[dict[str, Any]]:
@@ -96,6 +89,18 @@ class LocalRagStore:
         return [i for i, row in enumerate(self.rows) if match(row)]
 
     def dense_search(self, query: str, limit: int, allowed: list[int] | None = None) -> list[dict[str, Any]]:
+        import numpy as np
+
+        if self.embeddings is None:
+            self.embeddings = np.asarray(
+                _get_model().encode(
+                    self.texts,
+                    normalize_embeddings=True,
+                    show_progress_bar=False,
+                ),
+                dtype=np.float32,
+            )
+
         vector = np.asarray(
             _get_model().encode([query], normalize_embeddings=True, show_progress_bar=False)[0],
             dtype=np.float32,
