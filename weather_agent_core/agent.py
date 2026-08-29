@@ -70,6 +70,20 @@ class WeatherAgent:
             if group and not group.intersection(present):
                 preferred = "search_weather" if "search_weather" in group else sorted(group)[0]
                 calls.append(types.FunctionCall(name=preferred, args={"query": query}))
+
+        # The model can select the correct forecast tools but omit the
+        # temporal argument. For explicit tomorrow comparisons, enforce the
+        # temporal constraint from the user query at the execution boundary.
+        if plan.get("intent") == "comparison":
+            normalized_query = " ".join(query.lower().split())
+            if "forecast" in normalized_query and "tomorrow" in normalized_query:
+                for call in calls:
+                    if str(getattr(call, "name", "")) != "get_forecast":
+                        continue
+                    args = dict(getattr(call, "args", {}) or {})
+                    args["date"] = "tomorrow"
+                    call.args = args
+
         return calls
 
     @staticmethod
