@@ -2,9 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-import re
 
-from .router import classify
+from .router import classify, is_simple_current
 
 
 @dataclass(frozen=True)
@@ -40,12 +39,18 @@ class Planner:
         text = query.lower()
         comparison = intent == "comparison"
         risk = intent == "activity_risk"
+        alerts = intent == "alerts"
         knowledge = intent == "knowledge"
-        live = intent in {"live_weather", "activity_risk", "comparison"}
+        current = is_simple_current(query)
+        live = intent in {"live_weather", "activity_risk", "comparison", "alerts"} or current
 
         if knowledge:
             steps = (
-                PlanStep("knowledge", "knowledge", ("search_weather", "ask_weather")),
+                PlanStep("knowledge", "knowledge", ("search_weather", "ask_weather"), required=True, parallelizable=False),
+            )
+        elif alerts:
+            steps = (
+                PlanStep("alerts", "alerts", ("get_weather_alerts",), required=True, parallelizable=False),
             )
         elif risk:
             steps = (
@@ -53,19 +58,35 @@ class Planner:
                 PlanStep("alerts", "alerts", ("get_weather_alerts",), required=False),
             )
         elif comparison:
+            risk_comparison = any(
+                marker in text
+                for marker in ("outdoor", "cricket", "run", "safe", "risk", "suitable", "activity")
+            )
+            forecast_comparison = "forecast" in text
+            preferred = (
+                ("assess_weather_risk",)
+                if risk_comparison and not forecast_comparison
+                else ("get_forecast", "get_weather")
+            )
             steps = (
-                PlanStep("comparison_evidence", "comparison_evidence", ("get_forecast", "get_weather", "assess_weather_risk")),
+                PlanStep("comparison_evidence", "comparison_evidence", preferred),
                 PlanStep("comparison_knowledge", "knowledge", ("search_weather",), required=False),
             )
+        elif current:
+            steps = (
+                PlanStep("current_weather", "current_weather", ("get_weather",), required=True),
+            )
         else:
-            preferred = ("get_forecast", "get_weather") if any(x in text for x in ("forecast", "tomorrow", "next week")) else ("get_weather", "get_forecast")
+            preferred = (
+                ("get_forecast", "get_weather")
+                if any(x in text for x in ("forecast", "tomorrow", "next week"))
+                else ("get_weather", "get_forecast")
+            )
             steps = (
                 PlanStep("live_weather", "live_weather", preferred),
                 PlanStep("hazards", "alerts", ("get_weather_alerts",), required=False),
             )
 
-        # The planner is deliberately deterministic and inspectable. Gemini
-        # remains the reasoning layer that chooses concrete calls/arguments.
         plan = ExecutionPlan(
             intent=intent,
             steps=steps,

@@ -1,18 +1,27 @@
-"""Cross-encoder reranking implementation."""
+"""Cross-encoder reranking with a cheap small-corpus fast path."""
 from __future__ import annotations
+
 import os
+from threading import Lock
 from typing import Any
-from sentence_transformers import CrossEncoder
 
 MODEL = os.environ.get("WEATHER_RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
-MIN_CANDIDATES = int(os.environ.get("WEATHER_RERANK_MIN_CANDIDATES", "2"))
-_model: CrossEncoder | None = None
+# The bundled weather KB is intentionally small. Loading a second transformer
+# for <= 10 candidates costs more than it improves ranking. Keep the reranker
+# available for larger deployments by raising fusion_k/top_k or overriding this.
+MIN_CANDIDATES = int(os.environ.get("WEATHER_RERANK_MIN_CANDIDATES", "11"))
+_model: Any | None = None
+_model_lock = Lock()
 
 
-def _get_model() -> CrossEncoder:
+def _get_model() -> Any:
     global _model
     if _model is None:
-        _model = CrossEncoder(MODEL)
+        from sentence_transformers import CrossEncoder
+
+        with _model_lock:
+            if _model is None:
+                _model = CrossEncoder(MODEL)
     return _model
 
 

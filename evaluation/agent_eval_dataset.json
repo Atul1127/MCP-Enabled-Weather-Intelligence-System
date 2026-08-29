@@ -1,6 +1,6 @@
 {
-  "version": "1.0",
-  "description": "Agent tool-selection benchmark for the local Weather MCP agent. Knowledge Graph excluded.",
+  "version": "1.1",
+  "description": "Agent tool-selection benchmark for the local Weather MCP agent. RAG retrieval aliases are one logical capability.",
   "cases": [
     {"id":"current_01","category":"current","question":"What is the current weather in Kolkata?","expected_tools":["get_weather"],"required_args":[{"tool":"get_weather","location":"Kolkata"}]},
     {"id":"current_02","category":"current","question":"How is the weather right now in Mumbai?","expected_tools":["get_weather"],"required_args":[{"tool":"get_weather","location":"Mumbai"}]},
@@ -10,10 +10,10 @@
     {"id":"risk_02","category":"risk","question":"Should I plan an outdoor run in Mumbai tomorrow?","expected_tools":["assess_weather_risk"],"required_args":[{"tool":"assess_weather_risk","location":"Mumbai","activity":"outdoor run","date":"tomorrow"}]},
     {"id":"alerts_01","category":"alerts","question":"Are there any weather hazards for Kolkata over the next few days?","expected_tools":["get_weather_alerts"],"required_args":[{"tool":"get_weather_alerts","location":"Kolkata"}]},
     {"id":"alerts_02","category":"alerts","question":"Check Mumbai for actionable weather hazards this week.","expected_tools":["get_weather_alerts"],"required_args":[{"tool":"get_weather_alerts","location":"Mumbai"}]},
-    {"id":"rag_01","category":"rag","question":"What weather conditions are typically associated with heavy rainfall?","expected_tools":["search_weather","ask_weather"],"required_args":[]},
-    {"id":"rag_02","category":"rag","question":"What does precipitation probability actually mean?","expected_tools":["search_weather","ask_weather"],"required_args":[]},
-    {"id":"rag_03","category":"rag","question":"Which WMO weather code represents a thunderstorm?","expected_tools":["search_weather","ask_weather"],"required_args":[]},
-    {"id":"rag_04","category":"rag","question":"Why does forecast uncertainty increase for some future weather claims?","expected_tools":["search_weather","ask_weather"],"required_args":[]},
+    {"id":"rag_01","category":"rag","question":"What weather conditions are typically associated with heavy rainfall?","expected_tools":["search_weather"],"required_args":[]},
+    {"id":"rag_02","category":"rag","question":"What does precipitation probability actually mean?","expected_tools":["search_weather"],"required_args":[]},
+    {"id":"rag_03","category":"rag","question":"Which WMO weather code represents a thunderstorm?","expected_tools":["search_weather"],"required_args":[]},
+    {"id":"rag_04","category":"rag","question":"Why does forecast uncertainty increase for some future weather claims?","expected_tools":["search_weather"],"required_args":[]},
     {"id":"compare_01","category":"multi_tool","question":"Compare tomorrow's outdoor activity suitability in Kolkata and Mumbai.","expected_tools":["assess_weather_risk"],"required_args":[{"tool":"assess_weather_risk","location":"Kolkata","date":"tomorrow"},{"tool":"assess_weather_risk","location":"Mumbai","date":"tomorrow"}]},
     {"id":"compare_02","category":"multi_tool","question":"Compare the weather forecast for Kolkata and Delhi tomorrow.","expected_tools":["get_forecast"],"required_args":[{"tool":"get_forecast","location":"Kolkata","date":"tomorrow"},{"tool":"get_forecast","location":"Delhi","date":"tomorrow"}]},
     {"id":"reason_01","category":"multi_tool","question":"Which is better for cricket tomorrow, Kolkata or Mumbai?","expected_tools":["assess_weather_risk"],"required_args":[{"tool":"assess_weather_risk","location":"Kolkata","date":"tomorrow"},{"tool":"assess_weather_risk","location":"Mumbai","date":"tomorrow"}]},
