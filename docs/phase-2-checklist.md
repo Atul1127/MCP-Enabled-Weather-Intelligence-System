@@ -10,10 +10,12 @@
 - [x] Document security and secret-handling requirements
 - [x] Record final E2E and latency reference metrics
 - [x] Polish README for portfolio/demo use
+- [x] Add CI validation for tests and production configuration
+- [x] Add deployment guidance for a hosted environment
+- [x] Prepare portfolio/resume project summary
 
-## Next phase
+## Remaining
 
-- [ ] Add CI validation for tests and configuration
-- [ ] Add deployment guidance for a hosted environment
-- [ ] Prepare portfolio/resume project summary
 - [ ] Prepare screenshots/demo assets
+- [ ] Run and record post-merge CI verification
+- [ ] Final portfolio review
