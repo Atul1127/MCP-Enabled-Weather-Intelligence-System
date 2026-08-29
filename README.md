@@ -2,6 +2,10 @@
 
 An **MCP-first weather intelligence platform for Indian locations** that combines live weather data, deterministic risk intelligence, hybrid RAG, Gemini tool calling, LangGraph orchestration, security boundaries, observability, and evaluation.
 
+## Live Demo
+
+🚀 **Live Application:** https://mcp-enabled-weather-intelligence-system-production.up.railway.app
+
 ## What this project demonstrates
 
 - **Agentic orchestration:** Gemini selects capabilities while LangGraph controls a bounded execution loop.
