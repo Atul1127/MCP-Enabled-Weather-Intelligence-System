@@ -16,6 +16,17 @@ SYSTEM_PROMPT = """You are a grounded weather knowledge assistant. Use only the 
 _pipeline = RAGPipeline()
 
 
+def get_rag_pipeline() -> RAGPipeline:
+    """Return the process-local RAG pipeline for readiness and diagnostics.
+
+    The pipeline is constructed once at module import time, so this accessor
+    does not perform a network call or reload the corpus. It intentionally
+    exposes the service's existing singleton rather than reaching into private
+    state from the API layer.
+    """
+    return _pipeline
+
+
 def _limit_result(result: RetrievalResult, top_k: int) -> RetrievalResult:
     return RetrievalResult(result.plan, list(result.documents[:top_k]), result.context, list(result.sources[:top_k]))
 
