@@ -27,6 +27,7 @@ STRONG_CONCEPTUAL_MARKERS = (
     "weather codes", "uncertainty", "future weather claims",
 )
 RISK_MARKERS = ("safe", "risk", "suitable", "should i", "play", "run", "hike", "travel", "outdoor")
+CURRENT_MARKERS = ("current weather", "current conditions", "weather right now", "weather now")
 
 
 def _contains_marker(text: str, marker: str) -> bool:
@@ -57,6 +58,11 @@ def classify(query: str) -> str:
     # tomorrow?" must remain a live-weather request.
     if _any_marker(text, STRONG_CONCEPTUAL_MARKERS):
         return "knowledge"
+    # Current-weather requests are a distinct deterministic capability. This
+    # check must happen before the generic LIVE_MARKERS check so "right now"
+    # cannot fall through to the broader live-weather route.
+    if _any_marker(text, CURRENT_MARKERS):
+        return "current_weather"
     if _any_marker(text, LIVE_MARKERS):
         return "live_weather"
     if _any_marker(text, KNOWLEDGE_MARKERS):
@@ -65,8 +71,9 @@ def classify(query: str) -> str:
 
 
 def is_simple_current(query: str) -> bool:
-    text = query.lower().strip()
-    if any(_contains_marker(text, marker) for marker in LIVE_MARKERS if marker != "now"):
-        return False
-    patterns = (r"\bcurrent weather\b", r"\bcurrent conditions?\b", r"\bweather right now\b", r"\bweather now\b")
-    return any(re.search(pattern, text) for pattern in patterns)
+    """Return whether the request is explicitly for present conditions.
+
+    Do not reject "right now" merely because it is also a live-time marker;
+    it is one of the canonical current-weather phrasings.
+    """
+    return _any_marker(query.lower().strip(), CURRENT_MARKERS)
