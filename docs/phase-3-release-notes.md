@@ -1,1 +1,0 @@
-Phase 3 adds CI production-configuration checks, hosted deployment guidance, and portfolio-ready project copy. Screenshots remain after post-merge verification.
