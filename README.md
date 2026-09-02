@@ -15,6 +15,37 @@ An **MCP-first weather intelligence platform for Indian locations** that combine
 - **Evidence-first answers:** Live weather, forecasts, risks, alerts, and retrieved knowledge remain typed and auditable before synthesis.
 - **Production controls:** Input checks, MCP argument validation, bounded tool results, read-only containers, dropped capabilities, and no-new-privileges.
 - **Evaluation:** Retrieval, RAG, agent, answer-quality, and end-to-end benchmark suites.
+- **Interactive dashboard:** Responsive weather dashboard with current conditions, hourly forecast, 7-day forecast, forecast risk, filtered alerts, and an AI Weather Agent.
+
+## Dashboard
+
+The web interface is designed around the most useful weather information first:
+
+```text
+Location Search
+      ↓
+Current Weather
+      ↓
+Hourly Forecast (next 12 hours)
+      ↓
+Forecast Risk
+      ↓
+7-Day Forecast
+      ↓
+Alerts & Advisories
+      ↓
+AI Weather Agent
+```
+
+### Dashboard capabilities
+
+- **Current weather:** Temperature, feels-like temperature, humidity, wind, and resolved location.
+- **Hourly forecast:** Next 12 hours with time, weather condition, temperature, precipitation probability, rainfall, and wind.
+- **Forecast risk:** Application-level hazard severity with a compact risk indicator.
+- **7-day forecast:** Daily weather icons and high/low temperatures.
+- **Alerts & Advisories:** Forecast hazards grouped by date with severity filtering and progressive disclosure.
+- **AI Weather Agent:** Natural-language weather questions grounded in live tools and retrieved weather knowledge.
+- **Responsive UI:** Desktop and mobile layouts with accessible loading, error, and empty states.
 
 ## Architecture
 
@@ -203,6 +234,9 @@ rag/                        Modular RAG pipeline
 rag_service.py              HTTP-facing RAG adapter
 local_rag_store.py          File-backed local retrieval store
 app.py                      Flask dashboard/API
+templates/dashboard.html    Responsive weather intelligence dashboard
+static/css/dashboard.css    Dashboard styling and responsive layout
+static/js/dashboard.js      Dashboard interactions and rendering
 evaluation/                 Benchmarks, traces, and answer evaluation
 tests/                      Unit and integration tests
 docs/                       Architecture, demo, and release documentation
