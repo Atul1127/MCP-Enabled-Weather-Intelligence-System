@@ -40,19 +40,24 @@ async function loadWeather() {
   setBusy(button, true, 'Analyze');
   $('riskText').textContent = 'Analyzing live forecast…';
   $('severity').textContent = '—';
+  $('alertCount').textContent = 'Checking…';
   $('alerts').innerHTML = '<div class="muted">Loading hazard analysis…</div>';
 
   try {
     const data = await post('/weather/current', { location });
     const current = data.current || {};
     const displayLocation = data.location?.display_name || location;
-    $('place').textContent = displayLocation;
+    const cityName = location.split(',')[0].trim() || location;
+    $('place').textContent = `${cityName} Weather`;
+    $('locationDetail').textContent = displayLocation;
     $('temp').textContent = `${current.temperature_2m ?? '—'}°C`;
     $('feels').textContent = `${current.apparent_temperature ?? '—'}°C`;
+    $('tempStat').textContent = `${current.temperature_2m ?? '—'}°C`;
+    $('feelsStat').textContent = `${current.apparent_temperature ?? '—'}°C`;
     $('humidity').textContent = `${current.relative_humidity_2m ?? '—'}%`;
     $('wind').textContent = `${current.wind_speed_10m ?? '—'} km/h`;
     renderForecast(data.daily || {});
-    $('question').placeholder = `Ask about ${displayLocation} weather…`;
+    $('question').placeholder = `Ask about ${cityName} weather…`;
 
     try {
       const alerts = await post('/weather/alerts', { location });
@@ -60,13 +65,17 @@ async function loadWeather() {
     } catch (error) {
       $('severity').textContent = 'UNAVAILABLE';
       $('severity').style.color = 'var(--warn)';
+      $('riskMeter').style.width = '45%';
+      $('alertCount').textContent = 'Unavailable';
       $('riskText').textContent = 'Weather loaded, but hazard analysis is temporarily unavailable.';
       $('alerts').innerHTML = `<div class="alert"><b>Hazard analysis unavailable</b><span class="muted">${escapeHtml(error.message)}</span></div>`;
     }
   } catch (error) {
     $('severity').textContent = 'ERROR';
     $('severity').style.color = 'var(--danger)';
+    $('riskMeter').style.width = '100%';
     $('riskText').textContent = error.message;
+    $('alertCount').textContent = 'Error';
     $('alerts').innerHTML = '<div class="alert high"><b>Unable to load weather</b><span class="muted">Check the city name and try again.</span></div>';
     $('forecast').innerHTML = '<div class="muted">Forecast unavailable.</div>';
   } finally {
@@ -81,8 +90,13 @@ function renderAlerts(data) {
   $('severity').style.color = severity === 'HIGH'
     ? 'var(--danger)'
     : severity === 'MODERATE' ? 'var(--warn)' : 'var(--ok)';
+  $('alertCount').textContent = allAlerts.length
+    ? `${allAlerts.length} alert${allAlerts.length === 1 ? '' : 's'} detected`
+    : 'No active alerts';
+  const meterWidth = severity === 'HIGH' ? '100%' : severity === 'MODERATE' ? '60%' : '18%';
+  $('riskMeter').style.width = meterWidth;
   $('riskText').textContent = data.alert_count
-    ? `${data.alert_count} forecast hazard${data.alert_count === 1 ? '' : 's'} detected.`
+    ? `${data.alert_count} forecast hazard${data.alert_count === 1 ? '' : 's'} detected. Review the advisories below for details.`
     : 'No major hazards detected by the application thresholds.';
   renderAlertList(false);
 }
@@ -90,7 +104,7 @@ function renderAlerts(data) {
 function renderAlertList(expanded) {
   const box = $('alerts');
   if (!allAlerts.length) {
-    box.innerHTML = '<div class="alert none"><b>✓ No major hazards detected</b><span class="muted">Conditions are below the application alert thresholds.</span></div>';
+    box.innerHTML = '<div class="alert none"><div class="alert-title"><b>✓ No major hazards detected</b><span class="badge">CLEAR</span></div><span class="muted">Conditions are below the application alert thresholds.</span></div>';
     return;
   }
 
