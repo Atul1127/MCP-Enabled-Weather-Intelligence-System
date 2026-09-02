@@ -42,6 +42,7 @@ async function loadWeather() {
   $('severity').textContent = '—';
   $('alertCount').textContent = 'Checking…';
   $('alerts').innerHTML = '<div class="muted">Loading hazard analysis…</div>';
+  $('hourlyForecast').innerHTML = '<div class="muted">Loading hourly forecast…</div>';
 
   try {
     const data = await post('/weather/current', { location });
@@ -56,6 +57,7 @@ async function loadWeather() {
     $('feelsStat').textContent = `${current.apparent_temperature ?? '—'}°C`;
     $('humidity').textContent = `${current.relative_humidity_2m ?? '—'}%`;
     $('wind').textContent = `${current.wind_speed_10m ?? '—'} km/h`;
+    renderHourly(data.hourly || {}, current.time);
     renderForecast(data.daily || {});
     $('question').placeholder = `Ask about ${cityName} weather…`;
 
@@ -77,10 +79,54 @@ async function loadWeather() {
     $('riskText').textContent = error.message;
     $('alertCount').textContent = 'Error';
     $('alerts').innerHTML = '<div class="alert high"><b>Unable to load weather</b><span class="muted">Check the city name and try again.</span></div>';
+    $('hourlyForecast').innerHTML = '<div class="muted">Hourly forecast unavailable.</div>';
     $('forecast').innerHTML = '<div class="muted">Forecast unavailable.</div>';
   } finally {
     setBusy(button, false, 'Analyze');
   }
+}
+
+function weatherIcon(code) {
+  const icons = {
+    0:'☀️', 1:'🌤️', 2:'⛅', 3:'☁️', 45:'🌫️', 48:'🌫️',
+    51:'🌦️', 53:'🌦️', 55:'🌧️', 56:'🌧️', 57:'🌧️',
+    61:'🌧️', 63:'🌧️', 65:'🌧️', 66:'🌧️', 67:'🌧️',
+    71:'🌨️', 73:'🌨️', 75:'❄️', 77:'❄️', 80:'🌦️',
+    81:'🌧️', 82:'🌧️', 85:'🌨️', 86:'❄️', 95:'⛈️',
+    96:'⛈️', 99:'⛈️'
+  };
+  return icons[code] || '🌤️';
+}
+
+function renderHourly(data, currentTime) {
+  const times = Array.isArray(data.time) ? data.time : [];
+  const temps = Array.isArray(data.temperature_2m) ? data.temperature_2m : [];
+  const rainChance = Array.isArray(data.precipitation_probability) ? data.precipitation_probability : [];
+  const rain = Array.isArray(data.precipitation) ? data.precipitation : [];
+  const codes = Array.isArray(data.weather_code) ? data.weather_code : [];
+  const winds = Array.isArray(data.wind_speed_10m) ? data.wind_speed_10m : [];
+
+  if (!times.length) {
+    $('hourlyForecast').innerHTML = '<div class="muted">Hourly forecast unavailable.</div>';
+    return;
+  }
+
+  const startIndex = currentTime
+    ? Math.max(0, times.findIndex(time => time >= currentTime))
+    : 0;
+  const first = startIndex < 0 ? 0 : startIndex;
+  const items = times.slice(first, first + 12);
+
+  $('hourlyForecast').innerHTML = items.map((time, offset) => {
+    const index = first + offset;
+    const date = new Date(time);
+    const label = offset === 0 ? 'Now' : date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    const temp = temps[index] == null ? '—' : `${Math.round(temps[index])}°`;
+    const chance = rainChance[index] == null ? '—' : `${Math.round(rainChance[index])}%`;
+    const amount = rain[index] == null ? '0' : Number(rain[index]).toFixed(1);
+    const wind = winds[index] == null ? '—' : `${Math.round(winds[index])}`;
+    return `<div class="hour"><small>${label}</small><b>${weatherIcon(codes[index])}</b><strong>${temp}</strong><span class="hour-rain">💧 ${chance}</span><span class="hour-meta">${amount} mm · ${wind} km/h</span></div>`;
+  }).join('');
 }
 
 function renderAlerts(data) {
@@ -131,12 +177,11 @@ function renderForecast(data) {
   }
 
   const labels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const icons = { 0:'☀️', 1:'🌤️', 2:'⛅', 3:'☁️', 45:'🌫️', 48:'🌫️', 51:'🌦️', 53:'🌦️', 55:'🌧️', 61:'🌧️', 63:'🌧️', 65:'🌧️', 80:'🌦️', 81:'🌧️', 82:'🌧️', 95:'⛈️', 96:'⛈️', 99:'⛈️' };
   $('forecast').innerHTML = dates.slice(0, 7).map((date, index) => {
     const day = new Date(`${date}T12:00:00`);
     const high = max[index] == null ? '—' : `${Math.round(max[index])}°`;
     const low = min[index] == null ? '—' : `${Math.round(min[index])}°`;
-    return `<div class="day"><small>${index === 0 ? 'Today' : labels[day.getDay()]}</small><b>${icons[codes[index]] || '🌤️'}</b><strong>${high}</strong><small>${low}</small></div>`;
+    return `<div class="day"><small>${index === 0 ? 'Today' : labels[day.getDay()]}</small><b>${weatherIcon(codes[index])}</b><strong>${high}</strong><small>${low}</small></div>`;
   }).join('');
 }
 
