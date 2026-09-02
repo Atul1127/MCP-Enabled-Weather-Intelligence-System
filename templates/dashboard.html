@@ -6,6 +6,33 @@
   <meta name="description" content="MCP-enabled weather intelligence with live forecast analysis, alerts, and an AI weather agent.">
   <title>Weather Intelligence</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+  <style>
+    .alerts-toolbar{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px;align-items:center}
+    .alert-date-select{min-width:210px;background:#091625;color:var(--text);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font:inherit;font-size:12px;outline:none}
+    .alert-filters{display:flex;gap:7px;flex-wrap:wrap}
+    .alert-filter{background:transparent;border:1px solid var(--border);color:var(--muted);padding:9px 12px;border-radius:999px;font-size:11px;font-weight:750}
+    .alert-filter.active{background:rgba(105,169,255,.1);border-color:var(--accent);color:var(--accent)}
+    .alerts{gap:0;margin-top:14px}
+    .alert-day{margin-top:14px}
+    .alert-day:first-child{margin-top:0}
+    .alert-day-heading{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;margin-bottom:4px}
+    .alert-day-heading::after{content:"";height:1px;background:var(--border);flex:1}
+    .alert-day-count{font-size:10px;letter-spacing:0;color:var(--muted);font-weight:600}
+    .alert{display:grid;grid-template-columns:5px minmax(0,1fr) auto;gap:13px;align-items:center;padding:11px 0;border:0;border-bottom:1px solid var(--border);border-radius:0;background:transparent!important}
+    .alert:last-child{border-bottom:0}
+    .alert::before{content:"";width:4px;height:34px;border-radius:4px;background:var(--warn)}
+    .alert.high::before{background:var(--danger)}
+    .alert.none::before{background:var(--ok)}
+    .alert-main{min-width:0}
+    .alert-title{justify-content:flex-start;gap:8px}
+    .alert-title b{font-size:13px}
+    .alert-detail{color:var(--muted);font-size:11px;line-height:1.4;margin-top:3px}
+    .alert-meta{color:var(--muted);font-size:10px;white-space:nowrap;text-align:right}
+    .badge{padding:4px 7px;font-size:9px}
+    .more-alerts{width:auto;margin:10px auto 0;display:block;padding:7px 12px;border-radius:999px}
+    .alert-empty{padding:18px 0;color:var(--muted);font-size:12px}
+    @media(max-width:650px){.alert{grid-template-columns:4px minmax(0,1fr);gap:10px}.alert-meta{grid-column:2;text-align:left}.alert-date-select{width:100%}}
+  </style>
 </head>
 <body>
 <main>
@@ -89,6 +116,16 @@
         <p class="section-description">Potential weather hazards detected from the forecast.</p>
       </div>
       <span id="alertCount" class="alert-count">Checking…</span>
+    </div>
+    <div class="alerts-toolbar" aria-label="Alert filters">
+      <select id="alertDateFilter" class="alert-date-select" aria-label="Filter alerts by date">
+        <option value="all">All forecast dates</option>
+      </select>
+      <div class="alert-filters" role="group" aria-label="Filter alerts by severity">
+        <button class="alert-filter active" data-severity="ALL" onclick="setAlertSeverity('ALL')">All</button>
+        <button class="alert-filter" data-severity="HIGH" onclick="setAlertSeverity('HIGH')">High</button>
+        <button class="alert-filter" data-severity="MODERATE" onclick="setAlertSeverity('MODERATE')">Moderate</button>
+      </div>
     </div>
     <div id="alerts" class="alerts"><div class="muted">Run an analysis to detect hazards.</div></div>
   </section>
