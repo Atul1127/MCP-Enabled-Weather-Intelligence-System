@@ -21,24 +21,6 @@
     </div>
   </header>
 
-  <section class="card agent" aria-labelledby="agent-title">
-    <div class="section-label">AI Weather Agent</div>
-    <h2 id="agent-title">What do you want to know?</h2>
-    <p class="agent-sub">Ask about rain, travel, outdoor activities, hazards, or tomorrow's conditions.</p>
-    <div class="ask">
-      <input id="question" placeholder="Ask about Kolkata weather…" aria-label="Weather question">
-      <button id="askButton" onclick="askAgent()">Ask Agent</button>
-    </div>
-    <div class="chips" aria-label="Suggested questions">
-      <button class="chip" onclick="useQuestion('Will it rain tomorrow?')">Rain tomorrow</button>
-      <button class="chip" onclick="useQuestion('Is it safe for outdoor activities today?')">Outdoor activities</button>
-      <button class="chip" onclick="useQuestion('What weather hazards should I watch for?')">Weather hazards</button>
-      <button class="chip" onclick="useQuestion('Is the weather suitable for travel tomorrow?')">Travel conditions</button>
-    </div>
-    <div id="askStatus" class="status" aria-live="polite"></div>
-    <div id="answer" class="answer hidden" aria-live="polite"></div>
-  </section>
-
   <section class="card current-card" aria-labelledby="weather-title">
     <div class="card-heading">
       <div>
@@ -98,6 +80,24 @@
       <span id="alertCount" class="alert-count">Checking…</span>
     </div>
     <div id="alerts" class="alerts"><div class="muted">Run an analysis to detect hazards.</div></div>
+  </section>
+
+  <section class="card agent" aria-labelledby="agent-title">
+    <div class="section-label">AI Weather Agent</div>
+    <h2 id="agent-title">What do you want to know?</h2>
+    <p class="agent-sub">Ask about rain, travel, outdoor activities, hazards, or tomorrow's conditions.</p>
+    <div class="ask">
+      <input id="question" placeholder="Ask about Kolkata weather…" aria-label="Weather question">
+      <button id="askButton" onclick="askAgent()">Ask Agent</button>
+    </div>
+    <div class="chips" aria-label="Suggested questions">
+      <button class="chip" onclick="useQuestion('Will it rain tomorrow?')">Rain tomorrow</button>
+      <button class="chip" onclick="useQuestion('Is it safe for outdoor activities today?')">Outdoor activities</button>
+      <button class="chip" onclick="useQuestion('What weather hazards should I watch for?')">Weather hazards</button>
+      <button class="chip" onclick="useQuestion('Is the weather suitable for travel tomorrow?')">Travel conditions</button>
+    </div>
+    <div id="askStatus" class="status" aria-live="polite"></div>
+    <div id="answer" class="answer hidden" aria-live="polite"></div>
   </section>
 </main>
 <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
