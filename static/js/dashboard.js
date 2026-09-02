@@ -7,8 +7,14 @@ async function post(url, body) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   });
-  const data = await response.json();
-  if (!response.ok) throw Error(data.error || 'Request failed');
+  const text = await response.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    data = { error: text || 'Request failed' };
+  }
+  if (!response.ok) throw Error(data.error || `Request failed (${response.status})`);
   return data;
 }
 
@@ -39,13 +45,14 @@ async function loadWeather() {
   try {
     const data = await post('/weather/current', { location });
     const current = data.current || {};
-    $('place').textContent = data.location?.display_name || location;
+    const displayLocation = data.location?.display_name || location;
+    $('place').textContent = displayLocation;
     $('temp').textContent = `${current.temperature_2m ?? '—'}°C`;
     $('feels').textContent = `${current.apparent_temperature ?? '—'}°C`;
     $('humidity').textContent = `${current.relative_humidity_2m ?? '—'}%`;
     $('wind').textContent = `${current.wind_speed_10m ?? '—'} km/h`;
     renderForecast(data.daily || {});
-    $('question').placeholder = `Ask about ${location} weather…`;
+    $('question').placeholder = `Ask about ${displayLocation} weather…`;
 
     try {
       const alerts = await post('/weather/alerts', { location });
@@ -122,10 +129,12 @@ function renderForecast(data) {
 function askAgent() {
   const question = $('question').value.trim();
   if (!question) return;
-  askAgentRequest(question);
+  const location = $('location').value.trim();
+  const query = location ? `${question}\nLocation: ${location}` : question;
+  askAgentRequest(query);
 }
 
-async function askAgentRequest(question) {
+async function askAgentRequest(query) {
   const button = $('askButton');
   button.disabled = true;
   button.textContent = 'Thinking…';
@@ -134,12 +143,12 @@ async function askAgentRequest(question) {
   $('answer').textContent = '';
 
   try {
-    const data = await post('/weather/agent', { query: question });
+    const data = await post('/weather/agent', { query });
     $('answer').textContent = data.answer || data.response || data.final_answer || JSON.stringify(data, null, 2);
     $('askStatus').textContent = data.success ? 'Completed with live tools and grounded context.' : 'Agent returned an unsuccessful result.';
   } catch (error) {
     $('askStatus').textContent = error.message;
-    $('answer').textContent = 'Unable to generate an answer.';
+    $('answer').textContent = 'Unable to generate an answer. Try the question again after a moment.';
   } finally {
     button.disabled = false;
     button.textContent = 'Ask Agent';
