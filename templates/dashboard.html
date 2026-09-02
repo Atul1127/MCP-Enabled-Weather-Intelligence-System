@@ -26,7 +26,7 @@
     <h2 id="agent-title">What do you want to know?</h2>
     <p class="agent-sub">Ask about rain, travel, outdoor activities, hazards, or tomorrow's conditions.</p>
     <div class="ask">
-      <input id="question" placeholder="Is tomorrow suitable for outdoor activities?" aria-label="Weather question">
+      <input id="question" placeholder="Ask about Kolkata weather…" aria-label="Weather question">
       <button id="askButton" onclick="askAgent()">Ask Agent</button>
     </div>
     <div class="chips" aria-label="Suggested questions">
@@ -39,30 +39,65 @@
     <div id="answer" class="answer hidden" aria-live="polite"></div>
   </section>
 
-  <section class="top-grid">
-    <div class="card">
-      <h2 id="place">Weather</h2>
+  <section class="card current-card" aria-labelledby="weather-title">
+    <div class="card-heading">
+      <div>
+        <h2 id="weather-title"><span id="place">Kolkata Weather</span></h2>
+        <p id="locationDetail" class="location-detail">Kolkata, West Bengal, India</p>
+      </div>
+      <span class="live-indicator"><i></i> Live forecast</span>
+    </div>
+    <div class="current-layout">
+      <div class="temperature-block">
+        <span class="weather-icon" aria-hidden="true">🌦️</span>
+        <div>
+          <div id="temp" class="big-temp">—</div>
+          <div class="feels-line">Feels like <b id="feels">—</b></div>
+        </div>
+      </div>
       <div class="stats">
-        <div class="stat"><span class="muted">Temperature</span><b id="temp">—</b></div>
-        <div class="stat"><span class="muted">Feels like</span><b id="feels">—</b></div>
+        <div class="stat"><span class="muted">Temperature</span><b id="tempStat">—</b></div>
+        <div class="stat"><span class="muted">Feels like</span><b id="feelsStat">—</b></div>
         <div class="stat"><span class="muted">Humidity</span><b id="humidity">—</b></div>
         <div class="stat"><span class="muted">Wind</span><b id="wind">—</b></div>
       </div>
-      <div class="risk">
-        <div class="risk-head"><span class="muted">FORECAST RISK</span><strong id="severity">—</strong></div>
-        <p id="riskText" class="risk-copy">Loading forecast analysis...</p>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>Important alerts</h2>
-      <div id="alerts" class="alerts"><div class="muted">Run an analysis to detect hazards.</div></div>
     </div>
   </section>
 
-  <section class="card forecast-card">
-    <h2>7-day forecast</h2>
+  <section class="card risk-card" aria-labelledby="risk-title">
+    <div class="card-heading">
+      <div>
+        <div class="section-label">Safety overview</div>
+        <h2 id="risk-title">Forecast Risk</h2>
+      </div>
+      <strong id="severity" class="risk-severity">—</strong>
+    </div>
+    <div class="risk-content">
+      <div class="risk-meter" aria-hidden="true"><span id="riskMeter"></span></div>
+      <p id="riskText" class="risk-copy">Loading forecast analysis...</p>
+    </div>
+  </section>
+
+  <section class="card forecast-card" aria-labelledby="forecast-title">
+    <div class="card-heading">
+      <div>
+        <div class="section-label">Next seven days</div>
+        <h2 id="forecast-title">7-day forecast</h2>
+      </div>
+    </div>
     <div id="forecast" class="forecast"><div class="muted">Forecast will appear after analysis.</div></div>
+  </section>
+
+  <section class="card alerts-card" aria-labelledby="alerts-title">
+    <div class="card-heading">
+      <div>
+        <div class="section-label">Stay informed</div>
+        <h2 id="alerts-title">Alerts &amp; Advisories</h2>
+        <p class="section-description">Potential weather hazards detected from the forecast.</p>
+      </div>
+      <span id="alertCount" class="alert-count">Checking…</span>
+    </div>
+    <div id="alerts" class="alerts"><div class="muted">Run an analysis to detect hazards.</div></div>
   </section>
 </main>
 <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
