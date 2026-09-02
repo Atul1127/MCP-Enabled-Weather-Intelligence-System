@@ -78,7 +78,13 @@ def weather_current():
         if not details:
             return jsonify({"error": "Location could not be resolved"}), 404
         weather = weather_client.fetch_weather(details["latitude"], details["longitude"])
-        return jsonify({"success": True, "location": details, "current": weather.get("current", {}), "daily": weather.get("daily", {})})
+        return jsonify({
+            "success": True,
+            "location": details,
+            "current": weather.get("current", {}),
+            "hourly": weather.get("hourly", {}),
+            "daily": weather.get("daily", {}),
+        })
     except Exception:
         logger.exception("Current weather request failed")
         return jsonify({"error": "Failed to fetch weather"}), 502
