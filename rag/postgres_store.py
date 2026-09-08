@@ -36,6 +36,19 @@ class PostgresRagStore:
         if not allowed: return "", []
         return f" AND d.id IN ({','.join(['%s'] * len(allowed))})", list(allowed)
 
+    @staticmethod
+    def _fts_or_query(query: str) -> str:
+        """Build a safe OR tsquery from natural-language tokens.
+
+        plainto_tsquery uses AND semantics, which can make a normal question
+        require every word to occur in one document. Tokenizing here and joining
+        normalized terms with OR keeps lexical retrieval useful for long queries.
+        """
+        import re
+        tokens = re.findall(r"[\w]+", query, flags=re.UNICODE)
+        tokens = [token for token in tokens if len(token) >= 3]
+        return " | ".join(tokens[:16])
+
     def bm25_search(self, query: str, limit: int, allowed: list[str] | None = None) -> list[dict[str, Any]]:
         extra, extra_params = self._ids_clause(allowed)
         rows = lakebase.run_query(f"""
@@ -47,6 +60,22 @@ class PostgresRagStore:
             FROM weather_documents d WHERE 1 = 1 {extra}
             ORDER BY bm25_score DESC, d.synced_at DESC NULLS LAST LIMIT %s
         """, tuple([query, *extra_params, int(limit)]))
+        matches = [dict(row) for row in rows if float(row.get("bm25_score") or 0) > 0]
+        if matches:
+            return matches
+
+        relaxed = PostgresRagStore._fts_or_query(query)
+        if not relaxed:
+            return []
+        rows = lakebase.run_query(f"""
+            SELECT d.id, d.location, d.state, d.district, d.source, d.source_type,
+                   d.headline, d.narrative_text, d.forecast_date, d.temperature_min_c,
+                   d.temperature_max_c, d.rainfall_mm, d.precipitation_probability,
+                   d.weather_code, d.severity,
+                   ts_rank_cd(to_tsvector('simple', concat_ws(' ', d.location, d.state, d.district, d.headline, d.narrative_text)), to_tsquery('simple', %s)) AS bm25_score
+            FROM weather_documents d WHERE 1 = 1 {extra}
+            ORDER BY bm25_score DESC, d.synced_at DESC NULLS LAST LIMIT %s
+        """, tuple([relaxed, *extra_params, int(limit)]))
         return [dict(row) for row in rows if float(row.get("bm25_score") or 0) > 0]
 
     def dense_search(self, query_vector: list[float], limit: int, allowed: list[str] | None = None) -> list[dict[str, Any]]:
