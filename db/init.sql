@@ -2,7 +2,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE IF NOT EXISTS weather_documents (
     id TEXT PRIMARY KEY,
-    location TEXT NOT NULL,
+    location TEXT,
     state TEXT,
     district TEXT,
     latitude DOUBLE PRECISION,
@@ -22,6 +22,9 @@ CREATE TABLE IF NOT EXISTS weather_documents (
     payload JSONB NOT NULL,
     synced_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Generic reference documents may not have a physical weather location.
+ALTER TABLE weather_documents ALTER COLUMN location DROP NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_weather_documents_location ON weather_documents(location);
 CREATE INDEX IF NOT EXISTS idx_weather_documents_state ON weather_documents(state);
