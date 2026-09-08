@@ -14,6 +14,9 @@ RUN python -m pip install --upgrade pip \
 COPY . .
 
 ENV DATABASE_BACKEND=local \
+    DATABASE_URL=postgresql://weather_user:weather_password@localhost:5432/weather_rag \
+    WEATHER_RAG_BACKEND=postgres \
+    WEATHER_RAG_DENSE=0 \
     GEMINI_MODEL=gemini-3.6-flash \
     GEMINI_FALLBACK_MODELS=gemini-3.5-flash-lite,gemini-2.5-flash-lite \
     GEMINI_THINKING_LEVEL=low \
