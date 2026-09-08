@@ -11,6 +11,7 @@ services:
       - "5432:5432"
     volumes:
       - weather_pgdata:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U weather_user -d weather_rag"]
       interval: 5s
@@ -35,6 +36,7 @@ services:
       DATABASE_BACKEND: local
       DATABASE_URL: postgresql://weather_user:${POSTGRES_PASSWORD:-weather_password}@postgres:5432/weather_rag
       WEATHER_RAG_BACKEND: postgres
+      WEATHER_RAG_DENSE: "0"
       GEMINI_API_KEY: ${GEMINI_API_KEY:?GEMINI_API_KEY must be set}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.6-flash}
       GEMINI_FALLBACK_MODELS: ${GEMINI_FALLBACK_MODELS:-gemini-3.5-flash-lite}
