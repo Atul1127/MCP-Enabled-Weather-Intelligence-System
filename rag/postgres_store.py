@@ -1,8 +1,9 @@
 """PostgreSQL + pgvector retrieval backend.
 
-Unlike the local JSONL store, this backend keeps document vectors in PostgreSQL
-and performs filtering, lexical ranking, and vector similarity in the database.
-It is intended for multi-worker production deployments.
+The production path stores documents in PostgreSQL and performs lexical ranking
+and vector similarity in the database. The bundled knowledge corpus is loaded
+idempotently when the schema is first used; live weather synchronization remains
+separate.
 """
 from __future__ import annotations
 
@@ -15,28 +16,16 @@ class PostgresRagStore:
     """Database-backed RAG store using PostgreSQL full-text search + pgvector."""
 
     def __init__(self) -> None:
-        self._ensure_ready()
+        lakebase.ensure_weather_tables(embedding_dim=384)
+        self._bootstrap_corpus()
 
     @staticmethod
-    def _ensure_ready() -> None:
-        """Fail fast with a useful message when the vector schema is absent."""
-        rows = lakebase.run_query(
-            """
-            SELECT EXISTS (
-                SELECT 1 FROM information_schema.tables
-                WHERE table_name = 'weather_documents'
-            ) AS documents,
-            EXISTS (
-                SELECT 1 FROM information_schema.tables
-                WHERE table_name = 'weather_embeddings'
-            ) AS embeddings
-            """
-        )
-        if not rows or not rows[0]["documents"] or not rows[0]["embeddings"]:
-            raise RuntimeError(
-                "RAG database schema is not initialized. Run "
-                "lakebase.ensure_weather_tables() and the embedding indexer first."
-            )
+    def _bootstrap_corpus() -> None:
+        count = lakebase.run_query("SELECT COUNT(*) AS count FROM weather_documents WHERE source_type = 'knowledge'")[0]["count"]
+        if int(count) > 0:
+            return
+        from rag.index_local_corpus import load_corpus
+        load_corpus()
 
     @staticmethod
     def _where(location: str | None, state: str | None, source_type: str | None) -> tuple[str, list[Any]]:
@@ -55,10 +44,7 @@ class PostgresRagStore:
 
     def filtered_rows(self, location: str | None = None, state: str | None = None, source_type: str | None = None) -> list[str]:
         where, params = self._where(location, state, source_type)
-        rows = lakebase.run_query(
-            f"SELECT d.id FROM weather_documents d WHERE {where}",
-            tuple(params),
-        )
+        rows = lakebase.run_query(f"SELECT d.id FROM weather_documents d WHERE {where}", tuple(params))
         return [str(row["id"]) for row in rows]
 
     def _ids_clause(self, allowed: list[str] | None) -> tuple[str, list[Any]]:
@@ -68,7 +54,7 @@ class PostgresRagStore:
         return f" AND d.id IN ({placeholders})", list(allowed)
 
     def bm25_search(self, query: str, limit: int, allowed: list[str] | None = None) -> list[dict[str, Any]]:
-        """Lexical retrieval using PostgreSQL's built-in full-text index."""
+        """Lexical retrieval using PostgreSQL full-text ranking."""
         extra, extra_params = self._ids_clause(allowed)
         rows = lakebase.run_query(
             f"""
@@ -76,11 +62,9 @@ class PostgresRagStore:
                    d.headline, d.narrative_text, d.forecast_date,
                    d.temperature_min_c, d.temperature_max_c, d.rainfall_mm,
                    d.precipitation_probability, d.weather_code, d.severity,
-                   ts_rank_cd(
-                       to_tsvector('simple', concat_ws(' ', d.location, d.state,
-                           d.district, d.headline, d.narrative_text)),
-                       plainto_tsquery('simple', %s)
-                   ) AS bm25_score
+                   ts_rank_cd(to_tsvector('simple', concat_ws(' ', d.location, d.state,
+                       d.district, d.headline, d.narrative_text)),
+                       plainto_tsquery('simple', %s)) AS bm25_score
             FROM weather_documents d
             WHERE 1 = 1 {extra}
             ORDER BY bm25_score DESC, d.synced_at DESC NULLS LAST
