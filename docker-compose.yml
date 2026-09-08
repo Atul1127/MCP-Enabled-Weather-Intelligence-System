@@ -42,11 +42,14 @@ services:
       GEMINI_FALLBACK_MODELS: ${GEMINI_FALLBACK_MODELS:-gemini-3.5-flash-lite}
       GEMINI_THINKING_LEVEL: ${GEMINI_THINKING_LEVEL:-low}
       GEMINI_MAX_OUTPUT_TOKENS: ${GEMINI_MAX_OUTPUT_TOKENS:-700}
+      WEATHER_TRACE_PATH: /app/observability/traces.jsonl
       FLASK_RUN_HOST: 0.0.0.0
       FLASK_RUN_PORT: 8000
       WEATHER_ALLOW_SYNC: "0"
     ports:
       - "8000:8000"
+    volumes:
+      - weather_traces:/app/observability
     read_only: true
     tmpfs:
       - /tmp:size=64m,noexec,nosuid
@@ -59,3 +62,4 @@ services:
 
 volumes:
   weather_pgdata:
+  weather_traces:
