@@ -10,7 +10,8 @@ import lakebase
 
 def _stable_id(row: dict) -> str:
     explicit = row.get("id")
-    if explicit: return str(explicit)
+    if explicit:
+        return str(explicit)
     raw = json.dumps(row, sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -18,7 +19,8 @@ def _stable_id(row: dict) -> str:
 def load_corpus(path: str | Path = "data/weather_knowledge.jsonl") -> int:
     lakebase.ensure_weather_tables(embedding_dim=384)
     rows = [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
-    if not rows: return 0
+    if not rows:
+        return 0
     sql = """
     INSERT INTO weather_documents
       (id, location, state, district, source, source_type, headline,
@@ -33,7 +35,7 @@ def load_corpus(path: str | Path = "data/weather_knowledge.jsonl") -> int:
     with lakebase.get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.executemany(sql, [(
-                _stable_id(row), row.get("location"), row.get("state"), row.get("district"),
+                _stable_id(row), row.get("location") or "India", row.get("state"), row.get("district"),
                 row.get("source", "bundled"), row.get("source_type", "knowledge"),
                 row.get("title", "Weather knowledge"), row.get("text", row.get("narrative_text", "")),
                 row.get("date", row.get("forecast_date")), json.dumps(row, default=str),
