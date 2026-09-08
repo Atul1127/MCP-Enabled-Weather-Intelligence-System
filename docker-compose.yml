@@ -1,4 +1,22 @@
 services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: weather-rag-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: weather_rag
+      POSTGRES_USER: weather_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-weather_password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - weather_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U weather_user -d weather_rag"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   api:
     build:
       context: .
@@ -6,12 +24,17 @@ services:
     container_name: weather-rag-api
     restart: unless-stopped
     init: true
+    depends_on:
+      postgres:
+        condition: service_healthy
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
     environment:
       DATABASE_BACKEND: local
+      DATABASE_URL: postgresql://weather_user:${POSTGRES_PASSWORD:-weather_password}@postgres:5432/weather_rag
+      WEATHER_RAG_BACKEND: postgres
       GEMINI_API_KEY: ${GEMINI_API_KEY:?GEMINI_API_KEY must be set}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.6-flash}
       GEMINI_FALLBACK_MODELS: ${GEMINI_FALLBACK_MODELS:-gemini-3.5-flash-lite}
@@ -31,3 +54,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+
+volumes:
+  weather_pgdata:
