@@ -35,9 +35,12 @@ def inspect_text(text: str) -> dict[str, Any]:
     """
     if not isinstance(text, str):
         return {"suspicious": True, "signals": ["non_string_input"]}
-    normalized = _normalize_security_text(text)
     signals: list[str] = []
-    if _CONTROL.search(normalized): signals.append("control_character")
+    if _ZERO_WIDTH.search(text):
+        signals.append("zero_width_character")
+    normalized = _normalize_security_text(text)
+    if _CONTROL.search(normalized):
+        signals.append("control_character")
     matches = [pattern.pattern for pattern in _INJECTION_PATTERNS if pattern.search(normalized)]
     signals.extend(matches)
     return {"suspicious": bool(signals), "signals": signals}
@@ -49,8 +52,8 @@ def validate_user_query(query: str, *, max_length: int = _MAX_QUERY_LENGTH) -> s
     text = _normalize_security_text(query)
     if not text: raise ValueError("Query cannot be empty")
     if len(text) > max_length: raise ValueError(f"Query exceeds maximum length of {max_length} characters")
-    security = inspect_text(text)
-    if security["suspicious"]: raise ValueError("Query contains a blocked security signal")
+    security = inspect_text(query)
+    if security["suspicious"]: raise ValueError("Query contains a blocked prompt-injection/security signal")
     return text
 
 
