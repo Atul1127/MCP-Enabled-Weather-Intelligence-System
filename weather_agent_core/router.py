@@ -27,7 +27,10 @@ STRONG_CONCEPTUAL_MARKERS = (
     "weather codes", "uncertainty", "future weather claims",
 )
 RISK_MARKERS = ("safe", "risk", "suitable", "should i", "play", "run", "hike", "travel", "outdoor")
-CURRENT_MARKERS = ("current weather", "current conditions", "weather right now", "weather now")
+CURRENT_MARKERS = (
+    "current weather", "current conditions", "weather right now", "weather now",
+    "currently", "at the moment", "at present", "right at this moment",
+)
 
 
 def _contains_marker(text: str, marker: str) -> bool:
@@ -53,16 +56,18 @@ def classify(query: str) -> str:
         return "activity_risk"
     if _any_marker(text, ALERT_MARKERS):
         return "alerts"
+    # Explicit present-condition phrasing must beat broad conceptual markers
+    # such as "what is/what are". For example, "What is Mumbai's weather at
+    # the moment?" is a live current-weather request, not knowledge retrieval.
+    if _any_marker(text, CURRENT_MARKERS):
+        return "current_weather"
     # Strong conceptual markers override live words such as "forecast".
     # Generic "what is/what are" does not: "What is the forecast for Delhi
     # tomorrow?" must remain a live-weather request.
     if _any_marker(text, STRONG_CONCEPTUAL_MARKERS):
         return "knowledge"
     # Current-weather requests are a distinct deterministic capability. This
-    # check must happen before the generic LIVE_MARKERS check so "right now"
-    # cannot fall through to the broader live-weather route.
-    if _any_marker(text, CURRENT_MARKERS):
-        return "current_weather"
+    # check must happen before the broader LIVE_MARKERS check.
     if _any_marker(text, LIVE_MARKERS):
         return "live_weather"
     if _any_marker(text, KNOWLEDGE_MARKERS):
@@ -71,9 +76,5 @@ def classify(query: str) -> str:
 
 
 def is_simple_current(query: str) -> bool:
-    """Return whether the request is explicitly for present conditions.
-
-    Do not reject "right now" merely because it is also a live-time marker;
-    it is one of the canonical current-weather phrasings.
-    """
+    """Return whether the request is explicitly for present conditions."""
     return _any_marker(query.lower().strip(), CURRENT_MARKERS)
