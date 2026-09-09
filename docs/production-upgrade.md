@@ -1,48 +1,61 @@
 # Production AI Upgrade
 
-This branch upgrades the Weather Intelligence System around five high-impact goals.
+This document summarizes the production-focused changes now present in `main`.
 
-## 1. PostgreSQL + pgvector
+## 1. PostgreSQL + pgvector RAG
 
-- PostgreSQL is now the default RAG backend for the production compose stack.
-- `db/init.sql` creates `weather_documents`, `weather_embeddings`, HNSW vector indexing, and a PostgreSQL full-text index.
-- `rag/postgres_store.py` performs metadata-filtered lexical retrieval and pgvector similarity retrieval.
-- The bundled JSONL corpus is loaded idempotently into PostgreSQL.
-- The original local JSONL store remains available with `WEATHER_RAG_BACKEND=local`.
-- Dense retrieval is opt-in with `WEATHER_RAG_DENSE=1` because the ML dependencies are intentionally outside the lightweight runtime image.
+- PostgreSQL is the default RAG backend for the production Docker stack.
+- `db/init.sql` creates the weather document and vector tables plus full-text and vector indexes.
+- `rag/postgres_store.py` provides metadata-filtered PostgreSQL retrieval.
+- PostgreSQL full-text retrieval is the default knowledge path.
+- pgvector dense retrieval is available as an explicit option.
+- The bundled JSONL corpus can be loaded idempotently into PostgreSQL.
+- The local JSONL backend remains available for lightweight development/testing.
 
-## 2. Adaptive agent execution
+## 2. Bounded agent execution
 
-The existing Router -> Planner -> Reasoner -> MCP -> Verifier -> Synthesis design is retained because it is useful for multi-step questions. Deterministic plans can bypass a redundant Gemini tool-selection round; the existing RAG-only direct path remains in place. This keeps the architecture explainable while avoiding model calls when the capability is already known.
+The system retains the explainable LangGraph flow:
+
+```text
+Router -> Planner -> Decomposer -> Reasoner -> MCP Executor -> Verifier -> Synthesizer
+```
+
+Deterministic paths can avoid redundant model work when the required capability is already known. The RAG-only path can also bypass the full live-weather execution loop.
 
 ## 3. Layered security
 
-The security boundary now normalizes Unicode with NFKC, removes common zero-width/invisible characters before inspection, blocks control characters, retains injection signal checks, and continues to enforce tool allowlists, argument size/depth limits, semantic validation, and bounded untrusted observations.
+The security boundary normalizes Unicode, removes common invisible characters before inspection, blocks control characters, checks prompt-injection signals, validates locations and queries, enforces MCP tool allowlists, bounds argument/observation size and nesting, and keeps synchronization disabled by default.
 
 These controls are defense in depth and are not a complete prompt-injection guarantee.
 
 ## 4. Observability
 
-Trace context now propagates through async spans. MCP calls and final synthesis emit nested spans containing latency, success/failure state and retry attempts. Trace summaries also report failed spans.
+Trace context propagates through the agent and MCP execution path. Nested spans record stage names, latency, success/failure state, retry attempts, and a shared trace ID.
 
-No prompt or secret is written into the trace events by these changes.
+Prompt content and secrets are not intentionally written to trace events.
 
 ## 5. Evaluation
 
-`evaluation/stress_eval.py` generates a deterministic 512-case suite from multiple cities and paraphrased intent families. It evaluates the real Gemini + MCP loop rather than a mocked planner and reports task success, tool selection, argument correctness, mean latency, P50 and P95.
+The repository contains focused evaluation suites for retrieval, RAG, routing, answer quality, agent execution, and stress testing.
 
-Use a small limit first:
+The verified release run includes:
 
-```bash
-WEATHER_STRESS_LIMIT=32 python -m evaluation.stress_eval
-```
+- 122 automated tests passing locally.
+- 16/16 live agent evaluation cases passing.
+- 100% tool-selection accuracy in that evaluation.
+- 100% argument accuracy in evaluable cases.
+- 100% evidence sufficiency.
 
-Then run the full suite when quota/time permits:
+The larger stress evaluation is quota-consuming and should be run deliberately.
 
-```bash
-python -m evaluation.stress_eval
-```
+## Deployment
 
-## Important deployment note
+The application is deployed on Railway:
 
-The compose stack uses PostgreSQL + pgvector and defaults to sparse retrieval because the normal API image intentionally excludes `sentence-transformers` and PyTorch. For a dense production image, install the ML requirements and set `WEATHER_RAG_DENSE=1`; the vectors are persisted in PostgreSQL rather than held as a full corpus in every API worker.
+https://mcp-enabled-weather-intelligence-system-production.up.railway.app/
+
+The local production-style deployment uses Docker Compose with PostgreSQL + pgvector and the same API surface.
+
+## Runtime dependency boundary
+
+The normal API image intentionally excludes `torch` and `sentence-transformers`. They remain isolated in `requirements-rag-ml.txt` and are needed only when dense retrieval is explicitly enabled.
