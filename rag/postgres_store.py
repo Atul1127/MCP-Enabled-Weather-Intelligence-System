@@ -16,16 +16,24 @@ class PostgresRagStore:
     @staticmethod
     def _bootstrap_corpus() -> None:
         rows = lakebase.run_query("SELECT COUNT(*) AS count FROM weather_documents WHERE source = 'local-weather-guide'")
-        if rows and int(rows[0]["count"]) > 0: return
+        if rows and int(rows[0]["count"]) > 0:
+            return
         from rag.index_local_corpus import load_corpus
         load_corpus()
 
     @staticmethod
     def _where(location: str | None, state: str | None, source_type: str | None) -> tuple[str, list[Any]]:
-        clauses = ["1 = 1"]; params: list[Any] = []
-        if location: clauses.append("d.location ILIKE %s"); params.append(location)
-        if state: clauses.append("d.state ILIKE %s"); params.append(state)
-        if source_type: clauses.append("d.source_type = %s"); params.append(source_type)
+        clauses = ["1 = 1"]
+        params: list[Any] = []
+        if location:
+            clauses.append("d.location ILIKE %s")
+            params.append(location)
+        if state:
+            clauses.append("d.state ILIKE %s")
+            params.append(state)
+        if source_type:
+            clauses.append("d.source_type = %s")
+            params.append(source_type)
         return " AND ".join(clauses), params
 
     def filtered_rows(self, location: str | None = None, state: str | None = None, source_type: str | None = None) -> list[str]:
@@ -33,7 +41,13 @@ class PostgresRagStore:
         return [str(row["id"]) for row in lakebase.run_query(f"SELECT d.id FROM weather_documents d WHERE {where}", tuple(params))]
 
     def _ids_clause(self, allowed: list[str] | None) -> tuple[str, list[Any]]:
-        if not allowed: return "", []
+        # None means no filtering was requested. An empty list means filtering
+        # was requested but no documents matched; never silently fall back to
+        # the entire corpus in that case.
+        if allowed is None:
+            return "", []
+        if not allowed:
+            return " AND FALSE", []
         return f" AND d.id IN ({','.join(['%s'] * len(allowed))})", list(allowed)
 
     @staticmethod
