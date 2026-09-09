@@ -126,6 +126,15 @@ def _failure_detail(result: dict[str, Any]) -> str | None:
     return "agent returned success=false"
 
 
+def _exception_detail(exc: BaseException) -> str:
+    """Flatten Python 3.11+ exception groups to their deepest useful cause."""
+    if isinstance(exc, BaseExceptionGroup):
+        details = [_exception_detail(child) for child in exc.exceptions]
+        details = [item for item in details if item]
+        return details[0] if details else "ExceptionGroup: no underlying exception detail"
+    return f"{type(exc).__name__}: {exc}"
+
+
 async def main() -> None:
     cases = build_cases()
     limit = int(os.environ.get("WEATHER_STRESS_LIMIT", str(len(cases))))
@@ -138,7 +147,7 @@ async def main() -> None:
             error = _failure_detail(result)
         except Exception as exc:
             result = {"success": False, "tool_calls": []}
-            error = f"{type(exc).__name__}: {exc}"
+            error = _exception_detail(exc)
         latency = (time.perf_counter() - started) * 1000
         calls = result.get("tool_calls") or []
         expected = case["expected_tools"]
