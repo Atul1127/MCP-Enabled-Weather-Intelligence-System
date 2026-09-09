@@ -46,7 +46,10 @@ def _gemini_error_kind(exc: Exception) -> str:
 
     if "RESOURCE_EXHAUSTED" in text or "QUOTA_EXCEEDED" in text or "QUOTA EXHAUSTED" in text:
         return "quota"
-    if status == 429:
+    if status == 429 or any(
+        marker in text
+        for marker in ("429", "RATE LIMIT", "TOO MANY REQUESTS")
+    ):
         return "rate_limit"
     if status in {500, 502, 503, 504} or any(
         marker in text
