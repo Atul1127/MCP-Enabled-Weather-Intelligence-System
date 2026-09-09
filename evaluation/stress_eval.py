@@ -103,6 +103,21 @@ def _arg_match(actual: dict[str, Any], expected: dict[str, Any]) -> bool:
     return all(str(actual.get(k, "")).strip().lower() == str(v).strip().lower() for k, v in expected.items() if k != "tool")
 
 
+def _failure_detail(result: dict[str, Any]) -> str | None:
+    """Expose useful structured failure context without leaking raw tool output."""
+    if result.get("success"):
+        return None
+    errors = result.get("errors") or []
+    if errors:
+        return "; ".join(str(item) for item in errors[:3])
+    verification = result.get("verification") or {}
+    if verification and not verification.get("sufficient", True):
+        missing = verification.get("missing_capabilities") or []
+        if missing:
+            return "missing required evidence: " + ", ".join("/".join(map(str, group)) for group in missing)
+    return "agent returned success=false"
+
+
 async def main() -> None:
     cases = build_cases()
     limit = int(os.environ.get("WEATHER_STRESS_LIMIT", str(len(cases))))
@@ -112,10 +127,10 @@ async def main() -> None:
         started = time.perf_counter()
         try:
             result = await run_agent(case["question"])
-            error = None
+            error = _failure_detail(result)
         except Exception as exc:
             result = {"success": False, "tool_calls": []}
-            error = type(exc).__name__
+            error = f"{type(exc).__name__}: {exc}"
         latency = (time.perf_counter() - started) * 1000
         calls = result.get("tool_calls") or []
         expected = case["expected_tools"]
