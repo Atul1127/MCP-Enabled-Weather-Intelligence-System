@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from llm_provider import _gemini_error_kind, _gemini_retryable
+import pytest
+
+import llm_provider
+from llm_provider import _generate_with_fallback, _gemini_error_kind, _gemini_retryable
 
 
 class FakeQuotaError(Exception):
@@ -30,3 +33,27 @@ def test_gemini_permanent_errors_are_not_retried():
     exc = ValueError("invalid request")
     assert _gemini_error_kind(exc) == "permanent"
     assert _gemini_retryable(exc) is False
+
+
+def test_quota_failure_skips_same_model_retry(monkeypatch: pytest.MonkeyPatch):
+    class FakeModels:
+        calls = 0
+
+        def generate_content(self, **_: object) -> None:
+            self.calls += 1
+            raise FakeQuotaError()
+
+    class FakeClient:
+        models = FakeModels()
+
+    monkeypatch.setattr(llm_provider, "_GEMINI_CLIENT", FakeClient())
+    monkeypatch.setenv("GEMINI_FALLBACK_MODELS", "")
+
+    with pytest.raises(RuntimeError, match="quota exhausted"):
+        _generate_with_fallback(
+            contents="test",
+            config_factory=lambda _: object(),
+            primary_model="gemini-test",
+        )
+
+    assert FakeClient.models.calls == 1
