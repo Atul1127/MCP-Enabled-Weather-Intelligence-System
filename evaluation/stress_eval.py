@@ -1,8 +1,9 @@
-"""Large deterministic evaluation suite for the real Gemini + MCP agent.
+"""Balanced 100-case evaluation suite for the real Gemini + MCP agent.
 
-The suite intentionally uses generated paraphrases so the benchmark is not
-limited to a hand-written 16-case sample. Run only when Gemini credentials and
-MCP dependencies are configured; 512 live cases can consume provider quota.
+The suite uses deterministic paraphrases and multiple Indian cities so the
+benchmark covers the four main live-weather intent families plus knowledge/RAG.
+Run only when Gemini credentials and MCP dependencies are configured; these are
+live provider calls and can consume quota.
 """
 from __future__ import annotations
 
@@ -70,27 +71,34 @@ KNOWLEDGE = (
 
 def build_cases() -> list[dict[str, Any]]:
     cases: list[dict[str, Any]] = []
-    # 4 intent families x 8 paraphrases x 8 cities = 256, plus 256 knowledge
-    # paraphrase/location combinations. IDs are stable across runs.
-    for family, templates, tool, args_builder in (
+    families = (
         ("current", CURRENT, "get_weather", lambda city: {"location": city}),
         ("forecast", FORECAST, "get_forecast", lambda city: {"location": city, "date": "tomorrow"}),
         ("alerts", ALERTS, "get_weather_alerts", lambda city: {"location": city}),
         ("risk", RISK, "assess_weather_risk", lambda city: {"location": city, "date": "tomorrow"}),
-    ):
-        for city in CITIES:
-            for index, template in enumerate(templates):
-                cases.append({
-                    "id": f"stress-{family}-{city.lower()}-{index:02d}",
-                    "category": family,
-                    "question": template.format(city=city),
-                    "expected_tools": [tool],
-                    "required_args": [{"tool": tool, **args_builder(city)}],
-                })
-    for index in range(256):
+    )
+
+    # 20 cases per live intent family: two paraphrases for every city (16),
+    # plus four additional paraphrases across the first four cities (4).
+    for family, templates, tool, args_builder in families:
+        selected = [(city, index) for index in range(2) for city in CITIES]
+        selected.extend((CITIES[index], 2) for index in range(4))
+        for index, (city, template_index) in enumerate(selected):
+            template = templates[template_index]
+            cases.append({
+                "id": f"stress-{family}-{index:02d}",
+                "category": family,
+                "question": template.format(city=city),
+                "expected_tools": [tool],
+                "required_args": [{"tool": tool, **args_builder(city)}],
+            })
+
+    # 20 deterministic knowledge/RAG cases, cycling through the knowledge
+    # prompts rather than issuing hundreds of near-duplicate live requests.
+    for index in range(20):
         template = KNOWLEDGE[index % len(KNOWLEDGE)]
         cases.append({
-            "id": f"stress-knowledge-{index:03d}",
+            "id": f"stress-knowledge-{index:02d}",
             "category": "knowledge",
             "question": template,
             "expected_tools": ["search_weather", "ask_weather"],
@@ -123,7 +131,7 @@ async def main() -> None:
     limit = int(os.environ.get("WEATHER_STRESS_LIMIT", str(len(cases))))
     cases = cases[: max(1, min(limit, len(cases)))]
     rows: list[dict[str, Any]] = []
-    for case in cases:
+    for index, case in enumerate(cases, start=1):
         started = time.perf_counter()
         try:
             result = await run_agent(case["question"])
@@ -137,6 +145,8 @@ async def main() -> None:
         tool_ok = any(call.get("name") in expected for call in calls)
         args_ok = all(any(call.get("name") == item["tool"] and _arg_match(call.get("arguments") or {}, item) for call in calls) for item in case.get("required_args", []))
         rows.append({"id": case["id"], "category": case["category"], "success": bool(result.get("success")), "tool_selection_correct": tool_ok, "argument_accuracy": args_ok, "latency_ms": round(latency, 2), "error": error})
+        if index % 5 == 0 or index == len(cases):
+            print(f"[{index}/{len(cases)}] evaluated", flush=True)
 
     latencies = [row["latency_ms"] for row in rows]
     summary = {
@@ -148,7 +158,7 @@ async def main() -> None:
         "p50_latency_ms": round(statistics.median(latencies), 2),
         "p95_latency_ms": round(sorted(latencies)[max(0, int(len(latencies) * 0.95) - 1)], 2),
     }
-    report = {"suite": "generated 512-case stress evaluation", "summary": summary, "rows": rows}
+    report = {"suite": "balanced 100-case stress evaluation", "summary": summary, "rows": rows}
     path = os.environ.get("WEATHER_STRESS_REPORT", "evaluation/stress_report.json")
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(report, handle, indent=2)
