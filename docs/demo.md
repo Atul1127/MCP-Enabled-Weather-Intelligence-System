@@ -17,15 +17,21 @@ curl http://localhost:8000/healthz
 curl http://localhost:8000/readyz
 ```
 
-Expected healthy responses have `status: "ok"` and `status: "ready"` respectively.
+Open the dashboard at:
+
+```text
+http://localhost:8000/
+```
 
 ## 2. Run the agent from the CLI
+
+Knowledge/RAG example:
 
 ```bash
 python agent.py "What weather conditions are typically associated with heavy rainfall?"
 ```
 
-For a live-weather example:
+Live-weather example:
 
 ```bash
 python agent.py "What is the current weather in Mumbai and is it risky for outdoor activity?"
@@ -38,7 +44,7 @@ Current weather:
 ```bash
 curl -X POST http://localhost:8000/weather/current \
   -H "Content-Type: application/json" \
-  -d '{"city":"Mumbai"}'
+  -d '{"location":"Mumbai"}'
 ```
 
 Weather knowledge / RAG:
@@ -57,7 +63,20 @@ curl -X POST http://localhost:8000/weather/agent \
   -d '{"query":"What is the current weather in Mumbai and what outdoor risks should I consider?"}'
 ```
 
-## 4. Run evaluation
+## 4. Production deployment
+
+The application is deployed on Railway:
+
+https://mcp-enabled-weather-intelligence-system-production.up.railway.app/
+
+The same probes are available remotely:
+
+```bash
+curl https://mcp-enabled-weather-intelligence-system-production.up.railway.app/healthz
+curl https://mcp-enabled-weather-intelligence-system-production.up.railway.app/readyz
+```
+
+## 5. Run evaluation
 
 Unit/integration tests:
 
@@ -77,7 +96,7 @@ Agent benchmark:
 python -m evaluation.agent_benchmark
 ```
 
-## 5. Observability
+## 6. Observability
 
 Trace output is written to the configured `WEATHER_TRACE_PATH`. After an agent run, inspect a trace with:
 
