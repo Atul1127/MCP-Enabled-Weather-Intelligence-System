@@ -6,43 +6,17 @@
   <meta name="description" content="MCP-enabled weather intelligence with live forecast analysis, alerts, and an AI weather agent.">
   <title>Weather Intelligence</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
-  <style>
-    .alerts-toolbar{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px;align-items:center}
-    .alert-date-select{min-width:210px;background:#091625;color:var(--text);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font:inherit;font-size:12px;outline:none}
-    .alert-filters{display:flex;gap:7px;flex-wrap:wrap}
-    .alert-filter{background:transparent;border:1px solid var(--border);color:var(--muted);padding:9px 12px;border-radius:999px;font-size:11px;font-weight:750}
-    .alert-filter.active{background:rgba(105,169,255,.1);border-color:var(--accent);color:var(--accent)}
-    .alerts{gap:0;margin-top:14px}
-    .alert-day{margin-top:14px}
-    .alert-day:first-child{margin-top:0}
-    .alert-day-heading{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;margin-bottom:4px}
-    .alert-day-heading::after{content:"";height:1px;background:var(--border);flex:1}
-    .alert-day-count{font-size:10px;letter-spacing:0;color:var(--muted);font-weight:600}
-    .alert{display:grid;grid-template-columns:5px minmax(0,1fr) auto;gap:13px;align-items:center;padding:11px 0;border:0;border-bottom:1px solid var(--border);border-radius:0;background:transparent!important}
-    .alert:last-child{border-bottom:0}
-    .alert::before{content:"";width:4px;height:34px;border-radius:4px;background:var(--warn)}
-    .alert.high::before{background:var(--danger)}
-    .alert.none::before{background:var(--ok)}
-    .alert-main{min-width:0}
-    .alert-title{justify-content:flex-start;gap:8px}
-    .alert-title b{font-size:13px}
-    .alert-detail{color:var(--muted);font-size:11px;line-height:1.4;margin-top:3px}
-    .alert-meta{color:var(--muted);font-size:10px;white-space:nowrap;text-align:right}
-    .badge{padding:4px 7px;font-size:9px}
-    .more-alerts{width:auto;margin:10px auto 0;display:block;padding:7px 12px;border-radius:999px}
-    .alert-empty{padding:18px 0;color:var(--muted);font-size:12px}
-    @media(max-width:650px){.alert{grid-template-columns:4px minmax(0,1fr);gap:10px}.alert-meta{grid-column:2;text-align:left}.alert-date-select{width:100%}}
-  </style>
 </head>
 <body>
 <main>
   <header class="hero">
-    <div>
+    <div class="brand-copy">
       <div class="eyebrow">MCP-Enabled Weather Intelligence</div>
       <h1>Weather, explained.</h1>
-      <p>Live forecast signals, hazard detection, and grounded AI answers in one place.</p>
+      <p>Live conditions, useful forecasts, and an AI weather assistant for your day.</p>
     </div>
     <div class="location" role="search">
+      <span class="search-icon" aria-hidden="true">⌕</span>
       <input id="location" value="Kolkata" placeholder="Indian city" aria-label="City">
       <button id="analyze" onclick="loadWeather()">Analyze</button>
     </div>
@@ -51,6 +25,7 @@
   <section class="card current-card" aria-labelledby="weather-title">
     <div class="card-heading">
       <div>
+        <div class="section-label">Current conditions</div>
         <h2 id="weather-title"><span id="place">Kolkata Weather</span></h2>
         <p id="locationDetail" class="location-detail">Kolkata, West Bengal, India</p>
       </div>
@@ -58,9 +33,10 @@
     </div>
     <div class="current-layout">
       <div class="temperature-block">
-        <span class="weather-icon" aria-hidden="true">🌦️</span>
+        <span id="currentIcon" class="weather-icon" aria-hidden="true">🌦️</span>
         <div>
           <div id="temp" class="big-temp">—</div>
+          <div id="condition" class="condition">Loading conditions…</div>
           <div class="feels-line">Feels like <b id="feels">—</b></div>
         </div>
       </div>
@@ -73,29 +49,24 @@
     </div>
   </section>
 
+  <section class="insights" aria-label="Today's weather insights">
+    <div class="section-label">Today's insights</div>
+    <div id="insightCards" class="insight-grid">
+      <div class="insight muted-card">Analyzing conditions…</div>
+      <div class="insight muted-card">Finding useful windows…</div>
+      <div class="insight muted-card">Checking precipitation…</div>
+    </div>
+  </section>
+
   <section class="card hourly-card" aria-labelledby="hourly-title">
     <div class="card-heading">
       <div>
-        <div class="section-label">Next 12 hours</div>
+        <div class="section-label">Today</div>
         <h2 id="hourly-title">Hourly Forecast</h2>
       </div>
       <span class="hourly-note">Temperature · rain chance · wind</span>
     </div>
     <div id="hourlyForecast" class="hourly-forecast"><div class="muted">Hourly forecast will appear after analysis.</div></div>
-  </section>
-
-  <section class="card risk-card" aria-labelledby="risk-title">
-    <div class="card-heading">
-      <div>
-        <div class="section-label">Safety overview</div>
-        <h2 id="risk-title">Forecast Risk</h2>
-      </div>
-      <strong id="severity" class="risk-severity">—</strong>
-    </div>
-    <div class="risk-content">
-      <div class="risk-meter" aria-hidden="true"><span id="riskMeter"></span></div>
-      <p id="riskText" class="risk-copy">Loading forecast analysis...</p>
-    </div>
   </section>
 
   <section class="card forecast-card" aria-labelledby="forecast-title">
@@ -118,9 +89,7 @@
       <span id="alertCount" class="alert-count">Checking…</span>
     </div>
     <div class="alerts-toolbar" aria-label="Alert filters">
-      <select id="alertDateFilter" class="alert-date-select" aria-label="Filter alerts by date">
-        <option value="all">All forecast dates</option>
-      </select>
+      <select id="alertDateFilter" class="alert-date-select" aria-label="Filter alerts by date"><option value="all">All forecast dates</option></select>
       <div class="alert-filters" role="group" aria-label="Filter alerts by severity">
         <button class="alert-filter active" data-severity="ALL" onclick="setAlertSeverity('ALL')">All</button>
         <button class="alert-filter" data-severity="HIGH" onclick="setAlertSeverity('HIGH')">High</button>
@@ -131,22 +100,31 @@
   </section>
 
   <section class="card agent" aria-labelledby="agent-title">
-    <div class="section-label">AI Weather Agent</div>
-    <h2 id="agent-title">What do you want to know?</h2>
-    <p class="agent-sub">Ask about rain, travel, outdoor activities, hazards, or tomorrow's conditions.</p>
+    <div class="agent-header">
+      <div>
+        <div class="section-label">AI Weather Agent</div>
+        <h2 id="agent-title">Ask about your day.</h2>
+        <p class="agent-sub">Get a practical answer about rain, travel, outdoor plans, safety, or the forecast.</p>
+      </div>
+      <span class="agent-badge">✨ Ask anything</span>
+    </div>
     <div class="ask">
       <input id="question" placeholder="Ask about Kolkata weather…" aria-label="Weather question">
       <button id="askButton" onclick="askAgent()">Ask Agent</button>
     </div>
-    <div class="chips" aria-label="Suggested questions">
-      <button class="chip" onclick="useQuestion('Will it rain tomorrow?')">Rain tomorrow</button>
-      <button class="chip" onclick="useQuestion('Is it safe for outdoor activities today?')">Outdoor activities</button>
-      <button class="chip" onclick="useQuestion('What weather hazards should I watch for?')">Weather hazards</button>
-      <button class="chip" onclick="useQuestion('Is the weather suitable for travel tomorrow?')">Travel conditions</button>
+    <div class="suggestion-heading"><span>Try asking</span><span id="suggestionContext">Kolkata</span></div>
+    <div class="suggestion-categories" role="tablist" aria-label="Question categories">
+      <button class="suggestion-tab active" data-category="forecast" onclick="setSuggestionCategory('forecast')">Forecast</button>
+      <button class="suggestion-tab" data-category="travel" onclick="setSuggestionCategory('travel')">Travel</button>
+      <button class="suggestion-tab" data-category="outdoor" onclick="setSuggestionCategory('outdoor')">Outdoor</button>
+      <button class="suggestion-tab" data-category="safety" onclick="setSuggestionCategory('safety')">Safety</button>
     </div>
+    <div id="suggestions" class="suggestions" aria-label="Suggested questions"></div>
     <div id="askStatus" class="status" aria-live="polite"></div>
     <div id="answer" class="answer hidden" aria-live="polite"></div>
   </section>
+
+  <footer class="footer">Weather intelligence for India · Forecast data and application-level analysis</footer>
 </main>
 <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 </body>
