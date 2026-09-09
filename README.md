@@ -10,7 +10,7 @@ An **MCP-first weather intelligence platform for Indian locations** that combine
 
 - **Agentic orchestration:** Gemini selects capabilities while LangGraph controls a bounded execution loop.
 - **MCP architecture:** Weather and retrieval capabilities are exposed through protocol-based tools with an explicit model-facing allowlist.
-- **Grounded RAG:** Dense retrieval + BM25 + confidence-aware RRF + reranking + context compression.
+- **Grounded RAG:** PostgreSQL full-text retrieval is the default; optional dense retrieval uses pgvector.
 - **Safety-oriented intelligence:** Deterministic hazard detection and activity-risk scoring are separated from LLM generation.
 - **Evidence-first answers:** Live weather, forecasts, risks, alerts, and retrieved knowledge remain typed and auditable before synthesis.
 - **Production controls:** Input checks, MCP argument validation, bounded tool results, read-only containers, dropped capabilities, and no-new-privileges.
@@ -68,14 +68,12 @@ LangGraph WeatherAgent
        |              +--> weather knowledge retrieval
        |                         |
        |                         v
-       |                    Hybrid RAG
+       |                    PostgreSQL RAG
        |                         |
-       |                         +--> query analysis / expansion
-       |                         +--> metadata filtering
-       |                         +--> dense retrieval
-       |                         +--> BM25
-       |                         +--> confidence-aware RRF
-       |                         +--> reranking
+       |                         +--> full-text retrieval (default)
+       |                         +--> optional pgvector dense retrieval
+       |                         +--> optional query expansion
+       |                         +--> optional reranking/diversity
        |                         +--> context compression
        |
        +-------------------- Unified Evidence
@@ -104,6 +102,8 @@ GEMINI_FALLBACK_MODELS=gemini-3.5-flash-lite
 GEMINI_THINKING_LEVEL=low
 GEMINI_MAX_OUTPUT_TOKENS=700
 ```
+
+The provider distinguishes quota exhaustion from transient failures: exhausted model quotas are not retried against the same model, while transient provider failures may be retried before moving to a fallback model.
 
 Never commit or paste real API keys. Rotate a key immediately if it has been exposed.
 
@@ -137,7 +137,7 @@ curl http://localhost:8000/healthz
 curl http://localhost:8000/readyz
 ```
 
-The default deployment uses the file-backed local RAG store. PostgreSQL/Lakebase support remains available when explicitly configured.
+The default Docker deployment uses **PostgreSQL + pgvector** for the RAG store. Dense vector retrieval is disabled by default (`WEATHER_RAG_DENSE=0`) so the normal API image does not require the optional transformer stack. Enable it explicitly when the ML RAG dependencies are installed.
 
 ## Demo
 
@@ -169,11 +169,11 @@ curl -X POST http://localhost:8000/weather/agent \
 
 | Tool | Purpose |
 |---|---|
-| `get_weather` | Current weather and forecast data |
+| `get_weather` | Current weather and 7-day forecast data |
 | `get_forecast` | Specific future-day forecast |
 | `get_weather_alerts` | Deterministic forecast-based hazard detection |
 | `assess_weather_risk` | Deterministic activity-risk assessment |
-| `search_weather` | Hybrid weather knowledge retrieval |
+| `search_weather` | Weather knowledge retrieval |
 | `ask_weather` | Weather knowledge evidence retrieval alias |
 | `sync_weather` | Persistence sync; excluded from the model-facing allowlist |
 | `database_health` | Persistence health check |
@@ -192,13 +192,13 @@ Run the 16-case live agent evaluation:
 python -m evaluation.agent_e2e_eval
 ```
 
-Run the benchmark:
+Run the balanced 100-case stress evaluation:
 
 ```bash
-python -m evaluation.agent_benchmark
+WEATHER_STRESS_LIMIT=100 WEATHER_STRESS_REPORT=/tmp/stress_report_100.json python -m evaluation.stress_eval
 ```
 
-The latest verified 16-case benchmark achieved **100% task success, 100% tool-selection accuracy, 100% argument accuracy, 100% evidence sufficiency, 0% unnecessary calls, 0% unexpected calls, and 0% infrastructure failures**. Reference latency was approximately **8.6s mean / 8.6s P50 / 12.4s P95**.
+The stress suite records task success, tool-selection accuracy, argument accuracy for evaluable tool cases, and latency percentiles. Live evaluations consume Gemini quota and should be run deliberately.
 
 ## Runtime dependency boundary
 
@@ -217,38 +217,3 @@ python evaluation/trace_report.py <trace_id>
 Set `WEATHER_TRACE_PATH` to change the JSONL destination.
 
 ## Security
-
-The system uses deterministic prompt-injection signal checks, MCP argument validation, bounded untrusted tool results, and prompts that treat tool output and retrieved content as untrusted data. Docker additionally uses a non-root runtime, dropped Linux capabilities, `no-new-privileges`, a read-only root filesystem, and a constrained `/tmp` tmpfs.
-
-These controls are defense in depth, not a guarantee against every prompt-injection technique.
-
-## Project structure
-
-```text
-agent.py                    Canonical CLI + compatibility API
-weather_agent_core/         Router, planner, LangGraph, executor, evidence, synthesis
-llm_provider.py             Shared Gemini gateway
-mcp_client.py               MCP stdio client + capability discovery
-mcp_server.py               MCP server + weather/RAG tools
-rag/                        Modular RAG pipeline
-rag_service.py              HTTP-facing RAG adapter
-local_rag_store.py          File-backed local retrieval store
-app.py                      Flask dashboard/API
-templates/dashboard.html    Responsive weather intelligence dashboard
-static/css/dashboard.css    Dashboard styling and responsive layout
-static/js/dashboard.js      Dashboard interactions and rendering
-evaluation/                 Benchmarks, traces, and answer evaluation
-tests/                      Unit and integration tests
-docs/                       Architecture, demo, and release documentation
-```
-
-## Documentation
-
-- [`docs/demo.md`](docs/demo.md) — reproducible local demo
-- [`docs/production-readiness.md`](docs/production-readiness.md) — release checklist and verified state
-- [`docs/advanced-rag-agent.md`](docs/advanced-rag-agent.md) — advanced RAG/agent design
-- [`docs/architecture.svg`](docs/architecture.svg) — architecture diagram
-
-## Design goal
-
-> **Gemini decides which capability is needed, LangGraph controls the execution loop, MCP provides the capability boundary, deterministic weather logic handles safety-sensitive scoring, and modular hybrid RAG provides grounded domain knowledge.**
