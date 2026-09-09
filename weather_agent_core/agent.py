@@ -132,7 +132,7 @@ class WeatherAgent:
                 raise RuntimeError("MCP server exposed no allowed tools")
 
             emit("agent.mcp_capabilities", trace_id=trace_id, **registry.summary())
-            executor = MCPExecutor(session, registry.allowed_names)
+            executor = MCPExecutor(session, registry.allowed_names, trace_id=trace_id)
             messages: list[Any] = [types.Content(role="user", parts=[types.Part.from_text(text=query)])]
             active_declarations = declarations
             structured_response: dict[str, Any] = {}
