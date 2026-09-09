@@ -1,5 +1,6 @@
-"""Stage-by-stage benchmark for the local weather retrieval stack."""
+"""Simple benchmark for lexical and optional vector retrieval."""
 from __future__ import annotations
+
 import json
 import math
 import statistics
@@ -17,14 +18,12 @@ from local_rag_store import get_store
 from rag.retrieval.dense import search as dense_search
 from rag.retrieval.sparse import search as sparse_search
 from rag.retrieval.hybrid import fuse
-from rag.reranking.cross_encoder import rerank
-from rag.retrieval.diversity import select_mmr
 
 DATASET = Path(__file__).resolve().parent / "weather_retrieval_dataset.json"
 REPORT = Path(__file__).resolve().parent / "retrieval_benchmark_report.json"
 CANDIDATE_K = 20
 FINAL_K = 10
-STAGES = ("dense", "bm25", "hybrid", "reranked", "reranked_mmr")
+STAGES = ("dense", "bm25", "hybrid")
 
 
 def percentile(values: list[float], q: float) -> float:
@@ -48,7 +47,7 @@ def _metrics(documents: list[dict[str, Any]], gold: str) -> dict[str, float]:
     }
 
 
-def _timed(fn):
+def _timed(fn: Any) -> tuple[Any, float]:
     started = time.perf_counter()
     value = fn()
     return value, (time.perf_counter() - started) * 1000
@@ -63,21 +62,15 @@ def benchmark_cases(cases: list[dict[str, Any]], store: Any) -> dict[str, Any]:
         dense, dense_ms = _timed(lambda: dense_search(store, query, CANDIDATE_K, allowed))
         sparse, sparse_ms = _timed(lambda: sparse_search(store, query, CANDIDATE_K, allowed))
         hybrid, hybrid_ms = _timed(lambda: fuse(dense, sparse, CANDIDATE_K))
-        reranked, rerank_ms = _timed(lambda: rerank(query, hybrid, CANDIDATE_K))
-        mmr, mmr_ms = _timed(lambda: select_mmr(reranked, FINAL_K, lambda_mult=0.75))
-        cumulative = {
-            "dense": dense_ms,
-            "bm25": dense_ms + sparse_ms,
-            "hybrid": dense_ms + sparse_ms + hybrid_ms,
-            "reranked": dense_ms + sparse_ms + hybrid_ms + rerank_ms,
-            "reranked_mmr": dense_ms + sparse_ms + hybrid_ms + rerank_ms + mmr_ms,
-        }
         results = {
             "dense": (dense[:FINAL_K], dense_ms),
             "bm25": (sparse[:FINAL_K], sparse_ms),
             "hybrid": (hybrid[:FINAL_K], hybrid_ms),
-            "reranked": (reranked[:FINAL_K], rerank_ms),
-            "reranked_mmr": (mmr, mmr_ms),
+        }
+        cumulative = {
+            "dense": dense_ms,
+            "bm25": dense_ms + sparse_ms,
+            "hybrid": dense_ms + sparse_ms + hybrid_ms,
         }
         for stage, (documents, isolated_ms) in results.items():
             stage_rows[stage].append({
