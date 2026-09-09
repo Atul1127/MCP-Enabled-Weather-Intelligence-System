@@ -44,11 +44,10 @@ def _gemini_error_kind(exc: Exception) -> str:
     if status is None:
         status = getattr(exc, "code", None)
 
-    if status == 429 or "RESOURCE_EXHAUSTED" in text:
-        # Gemini uses RESOURCE_EXHAUSTED for both rate limiting and exhausted
-        # free-tier/project quotas. We treat it as quota-like because retrying
-        # the same request immediately cannot recover a depleted quota.
+    if "RESOURCE_EXHAUSTED" in text or "QUOTA_EXCEEDED" in text or "QUOTA EXHAUSTED" in text:
         return "quota"
+    if status == 429:
+        return "rate_limit"
     if status in {500, 502, 503, 504} or any(
         marker in text
         for marker in ("500", "502", "503", "504", "UNAVAILABLE", "INTERNAL", "DEADLINE_EXCEEDED")
@@ -59,7 +58,7 @@ def _gemini_error_kind(exc: Exception) -> str:
 
 def _gemini_retryable(exc: Exception) -> bool:
     """Return whether retrying the same Gemini model can plausibly help."""
-    return _gemini_error_kind(exc) == "transient"
+    return _gemini_error_kind(exc) in {"transient", "rate_limit"}
 
 
 def _gemini_thinking_level() -> str:
@@ -110,10 +109,11 @@ def _generate_with_fallback(
     primary_model: str | None = None,
 ) -> tuple[Any, str]:
     client = _gemini_client()
+    models = _gemini_models(primary_model)
     errors: list[str] = []
     quota_models: list[str] = []
 
-    for model in _gemini_models(primary_model):
+    for model in models:
         for attempt in range(2):
             try:
                 response = client.models.generate_content(
@@ -137,7 +137,7 @@ def _generate_with_fallback(
                 if attempt == 0:
                     time.sleep(1.0)
 
-    if quota_models and len(quota_models) == len(_gemini_models(primary_model)):
+    if quota_models and len(quota_models) == len(models):
         raise RuntimeError(
             "Gemini quota exhausted for all configured models; no provider retry is useful right now."
         )
