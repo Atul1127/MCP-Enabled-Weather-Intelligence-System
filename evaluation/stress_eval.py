@@ -152,17 +152,19 @@ async def main() -> None:
         calls = result.get("tool_calls") or []
         expected = case["expected_tools"]
         tool_ok = any(call.get("name") in expected for call in calls)
-        args_ok = all(any(call.get("name") == item["tool"] and _arg_match(call.get("arguments") or {}, item) for call in calls) for item in case.get("required_args", []))
-        rows.append({"id": case["id"], "category": case["category"], "success": bool(result.get("success")), "tool_selection_correct": tool_ok, "argument_accuracy": args_ok, "latency_ms": round(latency, 2), "error": error})
+        required_args = case.get("required_args", [])
+        args_ok = all(any(call.get("name") == item["tool"] and _arg_match(call.get("arguments") or {}, item) for call in calls) for item in required_args)
+        rows.append({"id": case["id"], "category": case["category"], "success": bool(result.get("success")), "tool_selection_correct": tool_ok, "argument_accuracy": args_ok, "argument_evaluable": bool(required_args), "latency_ms": round(latency, 2), "error": error})
         if index % 5 == 0 or index == len(cases):
             print(f"[{index}/{len(cases)}] evaluated", flush=True)
 
     latencies = [row["latency_ms"] for row in rows]
+    argument_rows = [row for row in rows if row["argument_evaluable"]]
     summary = {
         "cases": len(rows),
         "task_success_rate": round(sum(r["success"] for r in rows) / len(rows), 4),
         "tool_selection_accuracy": round(sum(r["tool_selection_correct"] for r in rows) / len(rows), 4),
-        "argument_accuracy": round(sum(r["argument_accuracy"] for r in rows) / len(rows), 4),
+        "argument_accuracy": round(sum(r["argument_accuracy"] for r in argument_rows) / len(argument_rows), 4) if argument_rows else None,
         "mean_latency_ms": round(statistics.mean(latencies), 2),
         "p50_latency_ms": round(statistics.median(latencies), 2),
         "p95_latency_ms": round(sorted(latencies)[max(0, int(len(latencies) * 0.95) - 1)], 2),
