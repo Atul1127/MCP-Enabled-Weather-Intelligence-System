@@ -70,7 +70,7 @@ function renderSuggestions() {
   if (!container) return;
   container.innerHTML = items.map((makeQuestion, index) => {
     const question = makeQuestion(city);
-    return `<button class="suggestion" onclick="useQuestion(${JSON.stringify(question)})"><span class="suggestion-icon">${['↗','◷','✦'][index]}</span><span>${escapeHtml(question)}</span><span class="suggestion-arrow">→</span></button>`;
+    return `<button type="button" class="suggestion" data-question="${escapeHtml(question)}"><span class="suggestion-icon">${['↗','◷','✦'][index]}</span><span>${escapeHtml(question)}</span><span class="suggestion-arrow">→</span></button>`;
   }).join('');
 }
 
@@ -337,9 +337,31 @@ function useQuestion(text) {
   $('question').focus();
 }
 
+$('analyze').addEventListener('click', loadWeather);
+$('askButton').addEventListener('click', askAgent);
+$('location').addEventListener('keydown', event => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    loadWeather();
+  }
+});
+document.querySelectorAll('.suggestion-tab').forEach(button => {
+  button.addEventListener('click', () => setSuggestionCategory(button.dataset.category));
+});
+$('suggestions').addEventListener('click', event => {
+  const button = event.target.closest('.suggestion');
+  if (!button) return;
+  const question = button.dataset.question;
+  if (!question) return;
+  useQuestion(question);
+  askAgentRequest(question + `\nLocation: ${$('location').value.trim() || currentLocation}`);
+});
 $('alertDateFilter').addEventListener('change', event => {
   alertDateFilter = event.target.value;
   renderAlertList();
+});
+document.querySelectorAll('.alert-filter').forEach(button => {
+  button.addEventListener('click', () => setAlertSeverity(button.dataset.severity));
 });
 $('question').addEventListener('keydown', event => {
   if (event.key === 'Enter' && !event.shiftKey) {
