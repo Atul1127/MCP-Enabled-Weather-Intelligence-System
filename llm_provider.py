@@ -37,15 +37,29 @@ def _gemini_client() -> Any:
     return _GEMINI_CLIENT
 
 
-def _gemini_retryable(exc: Exception) -> bool:
+def _gemini_error_kind(exc: Exception) -> str:
+    """Classify provider failures without depending on a specific SDK exception class."""
     text = str(exc).upper()
-    return any(
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(exc, "code", None)
+
+    if status == 429 or "RESOURCE_EXHAUSTED" in text:
+        # Gemini uses RESOURCE_EXHAUSTED for both rate limiting and exhausted
+        # free-tier/project quotas. We treat it as quota-like because retrying
+        # the same request immediately cannot recover a depleted quota.
+        return "quota"
+    if status in {500, 502, 503, 504} or any(
         marker in text
-        for marker in (
-            "503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "500",
-            "INTERNAL", "504", "DEADLINE_EXCEEDED",
-        )
-    )
+        for marker in ("500", "502", "503", "504", "UNAVAILABLE", "INTERNAL", "DEADLINE_EXCEEDED")
+    ):
+        return "transient"
+    return "permanent"
+
+
+def _gemini_retryable(exc: Exception) -> bool:
+    """Return whether retrying the same Gemini model can plausibly help."""
+    return _gemini_error_kind(exc) == "transient"
 
 
 def _gemini_thinking_level() -> str:
@@ -97,6 +111,7 @@ def _generate_with_fallback(
 ) -> tuple[Any, str]:
     client = _gemini_client()
     errors: list[str] = []
+    quota_models: list[str] = []
 
     for model in _gemini_models(primary_model):
         for attempt in range(2):
@@ -109,11 +124,23 @@ def _generate_with_fallback(
                 os.environ["GEMINI_LAST_MODEL"] = model
                 return response, model
             except Exception as exc:
+                kind = _gemini_error_kind(exc)
+                if kind == "quota":
+                    quota_models.append(model)
+                    errors.append(f"{model}: quota/resource exhausted")
+                    # Do not retry a depleted quota. Try another configured
+                    # model because model/project quotas can differ.
+                    break
                 errors.append(f"{model} attempt {attempt + 1}: {exc}")
                 if not _gemini_retryable(exc):
                     raise
                 if attempt == 0:
                     time.sleep(1.0)
+
+    if quota_models and len(quota_models) == len(_gemini_models(primary_model)):
+        raise RuntimeError(
+            "Gemini quota exhausted for all configured models; no provider retry is useful right now."
+        )
 
     raise RuntimeError(
         "All configured Gemini models failed after retries. " + " | ".join(errors)
