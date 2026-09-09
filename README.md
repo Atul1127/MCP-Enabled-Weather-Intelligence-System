@@ -72,9 +72,8 @@ LangGraph WeatherAgent
        |                         |
        |                         +--> full-text retrieval (default)
        |                         +--> optional pgvector dense retrieval
-       |                         +--> optional query expansion
-       |                         +--> optional reranking/diversity
-       |                         +--> context compression
+       |                         +--> simple top-k selection
+       |                         +--> bounded context + citations
        |
        +-------------------- Unified Evidence
                               |
@@ -202,13 +201,13 @@ The stress suite records task success, tool-selection accuracy, argument accurac
 
 ## Runtime dependency boundary
 
-The default API image keeps optional dense-RAG ML dependencies (`torch` and `sentence-transformers`) out of the runtime installation. They are listed in `requirements-rag-ml.txt` and loaded lazily only when dense retrieval or ML reranking is required.
+The default API image keeps optional dense-RAG ML dependencies (`torch` and `sentence-transformers`) out of the runtime installation. They are listed in `requirements-rag-ml.txt` and loaded lazily only when dense retrieval is explicitly enabled.
 
-This avoids pulling the large CUDA/NVIDIA dependency tree into the normal API image.
+This keeps the normal API image lightweight and avoids pulling the large ML dependency tree into the default runtime.
 
 ## Observability
 
-Agent, MCP, retrieval, reranking, context-compression, and synthesis stages emit trace events with a shared trace ID. Inspect a trace with:
+Agent, MCP, retrieval, context formatting, and synthesis stages emit trace events with a shared trace ID. Inspect a trace with:
 
 ```bash
 python evaluation/trace_report.py <trace_id>
