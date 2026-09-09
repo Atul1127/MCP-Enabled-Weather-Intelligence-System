@@ -1,98 +1,97 @@
 # MCP-Enabled Weather Intelligence System
 
-An **MCP-first weather intelligence platform for Indian locations** that combines live weather data, deterministic risk intelligence, hybrid RAG, Gemini tool calling, LangGraph orchestration, security boundaries, observability, and evaluation.
+An **MCP-first weather intelligence platform for Indian locations** combining live weather data, deterministic risk intelligence, grounded PostgreSQL RAG, Gemini tool calling, LangGraph orchestration, security boundaries, observability, and evaluation.
 
-## Live Demo
+## 🚀 Live Demo
 
-🚀 **Live Application:** https://mcp-enabled-weather-intelligence-system-production.up.railway.app
+**Production dashboard:** https://mcp-enabled-weather-intelligence-system-production.up.railway.app/
 
-## What this project demonstrates
+**Health:** https://mcp-enabled-weather-intelligence-system-production.up.railway.app/healthz  
+**Readiness:** https://mcp-enabled-weather-intelligence-system-production.up.railway.app/readyz
 
-- **Agentic orchestration:** Gemini selects capabilities while LangGraph controls a bounded execution loop.
-- **MCP architecture:** Weather and retrieval capabilities are exposed through protocol-based tools with an explicit model-facing allowlist.
-- **Grounded RAG:** PostgreSQL full-text retrieval is the default; optional dense retrieval uses pgvector.
-- **Safety-oriented intelligence:** Deterministic hazard detection and activity-risk scoring are separated from LLM generation.
-- **Evidence-first answers:** Live weather, forecasts, risks, alerts, and retrieved knowledge remain typed and auditable before synthesis.
-- **Production controls:** Input checks, MCP argument validation, bounded tool results, read-only containers, dropped capabilities, and no-new-privileges.
-- **Evaluation:** Retrieval, RAG, agent, answer-quality, and end-to-end benchmark suites.
-- **Interactive dashboard:** Responsive weather dashboard with current conditions, hourly forecast, 7-day forecast, forecast risk, filtered alerts, and an AI Weather Agent.
+The deployed service exposes the same dashboard and API used by the local Docker setup.
 
-## Dashboard
+## What it demonstrates
 
-The web interface is designed around the most useful weather information first:
-
-```text
-Location Search
-      ↓
-Current Weather
-      ↓
-Hourly Forecast (next 12 hours)
-      ↓
-Forecast Risk
-      ↓
-7-Day Forecast
-      ↓
-Alerts & Advisories
-      ↓
-AI Weather Agent
-```
-
-### Dashboard capabilities
-
-- **Current weather:** Temperature, feels-like temperature, humidity, wind, and resolved location.
-- **Hourly forecast:** Next 12 hours with time, weather condition, temperature, precipitation probability, rainfall, and wind.
-- **Forecast risk:** Application-level hazard severity with a compact risk indicator.
-- **7-day forecast:** Daily weather icons and high/low temperatures.
-- **Alerts & Advisories:** Forecast hazards grouped by date with severity filtering and progressive disclosure.
-- **AI Weather Agent:** Natural-language weather questions grounded in live tools and retrieved weather knowledge.
-- **Responsive UI:** Desktop and mobile layouts with accessible loading, error, and empty states.
+- **Agentic orchestration:** LangGraph controls a bounded workflow while Gemini handles tool selection and structured synthesis.
+- **MCP capability boundary:** Weather and knowledge capabilities are exposed through protocol-based tools with an explicit model-facing allowlist.
+- **Grounded RAG:** PostgreSQL full-text retrieval is the default; pgvector dense retrieval is optional.
+- **Deterministic intelligence:** Hazard detection and activity-risk scoring are computed separately from LLM generation.
+- **Evidence-first answers:** Live weather, forecasts, alerts, risk results, and retrieved knowledge remain typed and auditable before synthesis.
+- **Production hardening:** Input validation, prompt-injection checks, MCP allowlists, bounded observations, retries, timeouts, non-root containers, dropped capabilities, read-only filesystems, and readiness checks.
+- **Evaluation:** Unit/integration tests plus retrieval, RAG, agent, answer-quality, and live end-to-end evaluation suites.
+- **Interactive dashboard:** Current conditions, hourly forecast, 7-day forecast, application-level forecast risk, alerts, and an AI Weather Agent.
 
 ## Architecture
 
 ```text
-User / HTTP API
-       |
-       v
-LangGraph WeatherAgent
-       |
-       +--> Router -> Planner -> Decomposer
-       |
-       +--> Reasoner <---- bounded recovery ---- Verifier
-       |       |
-       |       +--> MCP Executor
-       |              |
-       |              +--> current weather
-       |              +--> forecast
-       |              +--> hazard detection
-       |              +--> activity risk
-       |              +--> weather knowledge retrieval
-       |                         |
-       |                         v
-       |                    PostgreSQL RAG
-       |                         |
-       |                         +--> full-text retrieval (default)
-       |                         +--> optional pgvector dense retrieval
-       |                         +--> simple top-k selection
-       |                         +--> bounded context + citations
-       |
-       +-------------------- Unified Evidence
-                              |
-                              v
-                       Gemini Synthesizer
-                              |
-                     Structured response
-                              |
-                     Citation validation
-                              |
-                              v
-                           Answer
+User / Dashboard / HTTP API
+            |
+            v
+      LangGraph WeatherAgent
+            |
+      Router -> Planner -> Decomposer
+            |
+            v
+   Reasoner <-> Verifier
+            |
+            v
+      MCP Executor
+       /    |     \
+      /     |      \
+ live   risk/alerts   weather knowledge
+ tools     tools          |
+                          v
+                  PostgreSQL RAG
+                  +-- FTS (default)
+                  +-- optional pgvector
+                  +-- simple top-k
+                  +-- bounded context + citations
+            |
+            v
+      Unified Evidence
+            |
+            v
+      Gemini Synthesizer
+            |
+      citation validation
+            |
+            v
+          Answer
 ```
 
-## Gemini
+### RAG flow
 
-Gemini is the only LLM provider. All Gemini generation, structured-output, and tool-calling requests pass through the shared `llm_provider.py` gateway.
+```text
+Query
+  -> query analysis
+  -> PostgreSQL full-text retrieval
+  -> optional pgvector retrieval
+  -> simple hybrid fusion when dense retrieval is enabled
+  -> top-k selection
+  -> bounded citation-ready context
+  -> grounded synthesis
+```
 
-Set credentials through the environment or `.env`:
+The production default keeps dense retrieval disabled, so the normal API image does not need PyTorch or Sentence Transformers.
+
+## Dashboard
+
+The web interface is organized around the information most useful for a weather decision:
+
+1. Location search
+2. Current weather
+3. Next 12 hours
+4. Forecast risk
+5. 7-day forecast
+6. Alerts & advisories
+7. AI Weather Agent
+
+The dashboard is responsive and includes explicit loading, error, and empty states.
+
+## Gemini configuration
+
+Gemini is the only LLM provider. Generation, structured output, and tool-calling requests pass through the shared `llm_provider.py` gateway.
 
 ```bash
 GEMINI_API_KEY=your-key
@@ -102,9 +101,9 @@ GEMINI_THINKING_LEVEL=low
 GEMINI_MAX_OUTPUT_TOKENS=700
 ```
 
-The provider distinguishes quota exhaustion from transient failures: exhausted model quotas are not retried against the same model, while transient provider failures may be retried before moving to a fallback model.
+The provider distinguishes quota exhaustion from transient failures: exhausted model quotas are not repeatedly retried, while transient failures can be retried before moving to a fallback model.
 
-Never commit or paste real API keys. Rotate a key immediately if it has been exposed.
+Never commit a real API key. Rotate any credential that has been exposed.
 
 ## Quick start
 
@@ -123,40 +122,37 @@ Create `.env` from `.env.example`, set a valid Gemini key, then run:
 python app.py
 ```
 
+Open `http://localhost:8000/` for the dashboard.
+
 ### Docker Compose
 
 ```bash
 docker compose up --build -d
 ```
 
-Verify the service:
+Verify:
 
 ```bash
 curl http://localhost:8000/healthz
 curl http://localhost:8000/readyz
 ```
 
-The default Docker deployment uses **PostgreSQL + pgvector** for the RAG store. Dense vector retrieval is disabled by default (`WEATHER_RAG_DENSE=0`) so the normal API image does not require the optional transformer stack. Enable it explicitly when the ML RAG dependencies are installed.
+The default Docker stack uses **PostgreSQL + pgvector** for persistence and RAG. Sparse/full-text retrieval is the normal path; dense retrieval is opt-in with `WEATHER_RAG_DENSE=1` and the optional ML dependencies.
 
-## Demo
+## API
 
-Full reproducible examples are in [`docs/demo.md`](docs/demo.md).
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/` | GET | Dashboard |
+| `/healthz` | GET | Liveness |
+| `/readyz` | GET | Dependency readiness |
+| `/weather/current` | POST | Current weather + forecast data |
+| `/weather/alerts` | POST | Deterministic forecast hazard detection |
+| `/weather/ask` | POST | Grounded weather knowledge / RAG |
+| `/weather/agent` | POST | Full LangGraph + MCP agent |
+| `/weather/sync` | POST | Protected persistence synchronization |
 
-Agent CLI:
-
-```bash
-python agent.py "What is the current weather in Mumbai and is it risky for outdoor activity?"
-```
-
-RAG endpoint:
-
-```bash
-curl -X POST http://localhost:8000/weather/ask \
-  -H "Content-Type: application/json" \
-  -d '{"query":"What conditions are associated with heavy rainfall?"}'
-```
-
-Full agent endpoint:
+Example:
 
 ```bash
 curl -X POST http://localhost:8000/weather/agent \
@@ -168,22 +164,24 @@ curl -X POST http://localhost:8000/weather/agent \
 
 | Tool | Purpose |
 |---|---|
-| `get_weather` | Current weather and 7-day forecast data |
+| `get_weather` | Current weather and forecast data |
 | `get_forecast` | Specific future-day forecast |
 | `get_weather_alerts` | Deterministic forecast-based hazard detection |
 | `assess_weather_risk` | Deterministic activity-risk assessment |
 | `search_weather` | Weather knowledge retrieval |
-| `ask_weather` | Weather knowledge evidence retrieval alias |
-| `sync_weather` | Persistence sync; excluded from the model-facing allowlist |
+| `ask_weather` | Weather knowledge retrieval alias |
+| `sync_weather` | Persistence synchronization; excluded from the model-facing allowlist |
 | `database_health` | Persistence health check |
 
 ## Evaluation
 
-Run unit/integration tests:
+Run the full automated test suite:
 
 ```bash
 python -m pytest -q
 ```
+
+The current release has **122 tests passing** locally.
 
 Run the 16-case live agent evaluation:
 
@@ -191,28 +189,72 @@ Run the 16-case live agent evaluation:
 python -m evaluation.agent_e2e_eval
 ```
 
-Run the balanced 100-case stress evaluation:
+Run the balanced stress evaluation deliberately because it consumes Gemini quota:
 
 ```bash
 WEATHER_STRESS_LIMIT=100 WEATHER_STRESS_REPORT=/tmp/stress_report_100.json python -m evaluation.stress_eval
 ```
 
-The stress suite records task success, tool-selection accuracy, argument accuracy for evaluable tool cases, and latency percentiles. Live evaluations consume Gemini quota and should be run deliberately.
-
-## Runtime dependency boundary
-
-The default API image keeps optional dense-RAG ML dependencies (`torch` and `sentence-transformers`) out of the runtime installation. They are listed in `requirements-rag-ml.txt` and loaded lazily only when dense retrieval is explicitly enabled.
-
-This keeps the normal API image lightweight and avoids pulling the large ML dependency tree into the default runtime.
+The stress suite reports task success, tool-selection accuracy, argument accuracy for evaluable tool cases, and latency percentiles.
 
 ## Observability
 
-Agent, MCP, retrieval, context formatting, and synthesis stages emit trace events with a shared trace ID. Inspect a trace with:
+Agent, MCP, retrieval, context formatting, and synthesis stages emit JSONL trace events with a shared trace ID. No prompts or secrets are intentionally written to traces.
 
 ```bash
 python evaluation/trace_report.py <trace_id>
 ```
 
-Set `WEATHER_TRACE_PATH` to change the JSONL destination.
+Set `WEATHER_TRACE_PATH` to change the trace destination.
 
 ## Security
+
+The system applies defense-in-depth controls at the user, planner, MCP, and synthesis boundaries:
+
+- Unicode normalization and invisible/control-character checks
+- Prompt-injection signal detection
+- Location, query, top-k, tool-name, and tool-argument validation
+- Explicit MCP tool allowlist
+- Bounded observation size/depth
+- Tool timeouts, retry policy, and duplicate-call coalescing
+- Untrusted-data handling in synthesis prompts
+- Protected synchronization endpoint
+- Non-root Docker user
+- Dropped Linux capabilities
+- `no-new-privileges`
+- Read-only container root filesystem
+
+These controls reduce attack surface but are not a complete prompt-injection guarantee.
+
+## Runtime dependency boundary
+
+The normal API runtime keeps optional dense-RAG ML dependencies (`torch` and `sentence-transformers`) out of the default installation. They live in `requirements-rag-ml.txt` and are required only when dense retrieval is explicitly enabled.
+
+## Project structure
+
+```text
+weather_agent_core/   LangGraph agent, planning, verification, MCP execution, security
+rag/                  PostgreSQL retrieval, optional dense retrieval, citations, context
+weather_client.py     Open-Meteo/Nominatim weather integration
+mcp_server.py         MCP weather capability server
+app.py                Flask API + dashboard
+lakebase.py           PostgreSQL/Lakebase persistence abstraction
+evaluation/           Retrieval, RAG, agent, answer, stress, and trace evaluation
+tests/                Automated regression and architecture tests
+docs/                 Architecture, deployment, demo, and production documentation
+db/                   PostgreSQL + pgvector initialization
+Dockerfile            Production container image
+docker-compose.yml    Local production-style stack
+```
+
+## Documentation
+
+- [`docs/demo.md`](docs/demo.md) — reproducible local/API demo
+- [`docs/deployment.md`](docs/deployment.md) — Docker and hosted deployment guidance
+- [`docs/advanced-rag-agent.md`](docs/advanced-rag-agent.md) — agent and RAG architecture
+- [`docs/production-readiness.md`](docs/production-readiness.md) — release verification checklist
+- [`docs/portfolio-summary.md`](docs/portfolio-summary.md) — portfolio/resume summary
+
+## License
+
+See the repository license file if present.
