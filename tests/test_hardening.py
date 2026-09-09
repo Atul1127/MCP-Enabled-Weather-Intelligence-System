@@ -47,6 +47,7 @@ def test_gemini_model_fallback_order(monkeypatch):
 
 
 def test_gemini_retryable_errors():
-    assert llm_provider._gemini_retryable(RuntimeError("429 RESOURCE_EXHAUSTED"))
+    assert not llm_provider._gemini_retryable(RuntimeError("429 RESOURCE_EXHAUSTED"))
+    assert llm_provider._gemini_retryable(RuntimeError("429 rate limit exceeded"))
     assert llm_provider._gemini_retryable(RuntimeError("503 UNAVAILABLE"))
     assert not llm_provider._gemini_retryable(RuntimeError("invalid prompt"))
