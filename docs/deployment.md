@@ -1,12 +1,26 @@
 # Deployment Guide
 
-## Default Docker deployment
+## Production deployment
 
-The repository's default Compose deployment uses the file-backed local RAG store and is intended for a simple single-container deployment.
+The application is deployed on Railway:
+
+**https://mcp-enabled-weather-intelligence-system-production.up.railway.app/**
+
+Useful probes:
+
+- `GET /healthz` — process liveness
+- `GET /readyz` — Gemini + RAG readiness
+- `GET /` — dashboard
+
+Keep platform secrets and database credentials in the platform's environment configuration. Never commit them to the repository.
+
+## Local Docker deployment
+
+The repository's production-style local stack uses Flask/Gunicorn, PostgreSQL with pgvector, and the same application image used by the API service.
 
 1. Copy `.env.example` to `.env`.
 2. Set `GEMINI_API_KEY` to a valid key.
-3. Build and start the service:
+3. Start the stack:
 
 ```bash
 docker compose up --build -d
@@ -19,21 +33,26 @@ curl http://localhost:8000/healthz
 curl http://localhost:8000/readyz
 ```
 
-The container runs as a non-root user, drops Linux capabilities, enables `no-new-privileges`, uses a read-only root filesystem, and provides a constrained `/tmp` tmpfs.
+5. Open the dashboard at `http://localhost:8000/`.
 
-## Hosted deployment checklist
+The API container runs as a non-root user, drops Linux capabilities, enables `no-new-privileges`, uses a read-only root filesystem, and provides a constrained `/tmp` tmpfs. Trace output is stored on the dedicated writable observability volume.
 
-For a hosted environment, provide the following as platform-managed configuration/secrets rather than committing them:
+## Configuration
+
+Important environment variables include:
 
 - `GEMINI_API_KEY`
 - `GEMINI_MODEL`
 - `GEMINI_FALLBACK_MODELS`
+- `DATABASE_BACKEND` / PostgreSQL connection settings
+- `WEATHER_RAG_BACKEND`
+- `WEATHER_RAG_DENSE`
 - `WEATHER_TRACE_PATH`
-- Persistence/database settings when using PostgreSQL/Lakebase instead of the local store.
+- `WEATHER_ALLOW_SYNC`
 
-Expose only port `8000` behind the platform's TLS/reverse proxy. Configure the platform health check to use `/readyz` and retain `/healthz` for process liveness.
+Dense retrieval is disabled by default. Enable it only when the optional ML requirements are installed.
 
-Set a restart policy and resource limits appropriate to the platform. Keep `WEATHER_ALLOW_SYNC=0` unless the write-capable synchronization endpoint has been explicitly secured with an administrative credential and network policy.
+Keep `WEATHER_ALLOW_SYNC=0` unless the synchronization endpoint is explicitly protected with an administrative credential and appropriate network policy.
 
 ## Production verification
 
@@ -42,14 +61,19 @@ Before declaring a deployment ready:
 ```bash
 python -m pytest -q
 python -m evaluation.agent_e2e_eval
-python -m evaluation.agent_benchmark
 ```
 
-Then verify the deployed `/healthz` and `/readyz` endpoints and inspect a representative trace if observability is enabled.
+Then verify the deployed `/healthz` and `/readyz` endpoints and inspect a representative trace when observability is enabled.
 
-## Persistence options
+## Persistence
 
-The default local deployment is intentionally simple and zero-cost. PostgreSQL/Lakebase support remains available for environments that need managed persistence. Select that backend explicitly and provide its credentials through the deployment platform's secret/configuration system.
+PostgreSQL is the default production RAG backend in the Docker configuration. The code also retains a local JSONL backend for development and a Lakebase-compatible persistence path for managed Databricks environments.
+
+The bundled weather corpus can be indexed into PostgreSQL with:
+
+```bash
+python -m rag.index_local_corpus
+```
 
 ## Secrets and artifacts
 
