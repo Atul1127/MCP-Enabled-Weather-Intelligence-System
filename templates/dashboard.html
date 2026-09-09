@@ -5,52 +5,45 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="description" content="MCP-enabled weather intelligence with live forecast analysis, alerts, and an AI weather agent.">
   <title>Weather Intelligence</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}?v=20260909">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}?v=20260910">
 </head>
 <body>
 <main>
-  <header class="hero">
-    <div class="brand-copy">
-      <div class="eyebrow">MCP-Enabled Weather Intelligence</div>
-      <h1>Weather, explained.</h1>
-      <p>Live conditions, useful forecasts, and an AI weather assistant for your day.</p>
-    </div>
-    <div class="location" role="search">
-      <span class="search-icon" aria-hidden="true">⌕</span>
-      <input id="location" value="Kolkata" placeholder="Indian city" aria-label="City">
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">✦</span><div><b>Weather Intelligence</b><small>MCP-powered weather for India</small></div></div>
+    <div class="location-search" role="search">
+      <span aria-hidden="true">⌕</span>
+      <input id="location" value="Kolkata" placeholder="Search an Indian city" aria-label="City">
       <button id="analyze" type="button">Analyze</button>
     </div>
   </header>
 
-  <section class="card current-card" aria-labelledby="weather-title">
-    <div class="card-heading">
-      <div>
-        <div class="section-label">Current conditions</div>
-        <h2 id="weather-title"><span id="place">Kolkata Weather</span></h2>
-        <p id="locationDetail" class="location-detail">Kolkata, West Bengal, India</p>
-      </div>
-      <span class="live-indicator"><i></i> Live forecast</span>
+  <section class="weather-hero">
+    <div class="hero-copy">
+      <span class="eyebrow">Live conditions</span>
+      <h1 id="place">Kolkata Weather</h1>
+      <p id="locationDetail">Kolkata, West Bengal, India</p>
+      <div class="hero-status"><span class="live-dot"></span> Live forecast</div>
     </div>
-    <div class="current-layout">
-      <div class="temperature-block">
-        <span id="currentIcon" class="weather-icon" aria-hidden="true">🌦️</span>
-        <div>
-          <div id="temp" class="big-temp">—</div>
-          <div id="condition" class="condition">Loading conditions…</div>
-          <div class="feels-line">Feels like <b id="feels">—</b></div>
-        </div>
-      </div>
-      <div class="stats">
-        <div class="stat"><span class="muted">Temperature</span><b id="tempStat">—</b></div>
-        <div class="stat"><span class="muted">Feels like</span><b id="feelsStat">—</b></div>
-        <div class="stat"><span class="muted">Humidity</span><b id="humidity">—</b></div>
-        <div class="stat"><span class="muted">Wind</span><b id="wind">—</b></div>
-      </div>
+    <div class="hero-temperature">
+      <span id="currentIcon" class="hero-icon" aria-hidden="true">🌦️</span>
+      <div><strong id="temp">—°</strong><span id="condition">Loading conditions…</span><small>Feels like <b id="feels">—°</b></small></div>
+    </div>
+    <div class="hero-stats">
+      <div><span>Temperature</span><b id="tempStat">—</b></div>
+      <div><span>Feels like</span><b id="feelsStat">—</b></div>
+      <div><span>Humidity</span><b id="humidity">—</b></div>
+      <div><span>Wind</span><b id="wind">—</b></div>
+    </div>
+
+    <div class="hourly-strip">
+      <div class="strip-heading"><span>Today</span><small>Hourly forecast</small></div>
+      <div id="hourlyForecast" class="hourly-forecast"><div class="muted">Loading hourly forecast…</div></div>
     </div>
   </section>
 
-  <section class="insights" aria-label="Today's weather insights">
-    <div class="section-label">Today's insights</div>
+  <section class="section insights-section" aria-label="Today's weather insights">
+    <div class="section-heading"><div><span class="eyebrow">What matters</span><h2>Today's outlook</h2></div><span class="section-note">Simple signals from the forecast</span></div>
     <div id="insightCards" class="insight-grid">
       <div class="insight muted-card">Analyzing conditions…</div>
       <div class="insight muted-card">Finding useful windows…</div>
@@ -58,61 +51,37 @@
     </div>
   </section>
 
-  <section class="card hourly-card" aria-labelledby="hourly-title">
-    <div class="card-heading">
-      <div>
-        <div class="section-label">Today</div>
-        <h2 id="hourly-title">Hourly Forecast</h2>
-      </div>
-      <span class="hourly-note">Temperature · rain chance · wind</span>
+  <section class="split-grid">
+    <div class="section forecast-panel">
+      <div class="section-heading"><div><span class="eyebrow">Plan ahead</span><h2>7-day forecast</h2></div></div>
+      <div id="forecast" class="forecast"><div class="muted">Forecast will appear after analysis.</div></div>
     </div>
-    <div id="hourlyForecast" class="hourly-forecast"><div class="muted">Hourly forecast will appear after analysis.</div></div>
+
+    <div class="section alerts-panel">
+      <div class="section-heading"><div><span class="eyebrow">Stay informed</span><h2>Advisories</h2></div><span id="alertCount" class="alert-count">Checking…</span></div>
+      <div class="alerts-toolbar">
+        <select id="alertDateFilter" class="alert-date-select" aria-label="Filter alerts by date"><option value="all">All forecast dates</option></select>
+        <div class="alert-filters" role="group" aria-label="Filter alerts by severity">
+          <button type="button" class="alert-filter active" data-severity="ALL">All</button>
+          <button type="button" class="alert-filter" data-severity="HIGH">High</button>
+          <button type="button" class="alert-filter" data-severity="MODERATE">Moderate</button>
+        </div>
+      </div>
+      <div id="alerts" class="alerts"><div class="muted">Run an analysis to detect hazards.</div></div>
+    </div>
   </section>
 
-  <section class="card forecast-card" aria-labelledby="forecast-title">
-    <div class="card-heading">
-      <div>
-        <div class="section-label">Next seven days</div>
-        <h2 id="forecast-title">7-day forecast</h2>
-      </div>
+  <section class="ai-section" aria-labelledby="agent-title">
+    <div class="ai-glow"></div>
+    <div class="ai-header">
+      <div><span class="eyebrow">✦ Weather AI</span><h2 id="agent-title">Ask about your day.</h2><p>Get a practical answer about rain, travel, outdoor plans, safety, or the forecast.</p></div>
+      <span class="ai-badge">MCP + AI</span>
     </div>
-    <div id="forecast" class="forecast"><div class="muted">Forecast will appear after analysis.</div></div>
-  </section>
-
-  <section class="card alerts-card" aria-labelledby="alerts-title">
-    <div class="card-heading">
-      <div>
-        <div class="section-label">Stay informed</div>
-        <h2 id="alerts-title">Alerts &amp; Advisories</h2>
-        <p class="section-description">Potential weather hazards detected from the forecast.</p>
-      </div>
-      <span id="alertCount" class="alert-count">Checking…</span>
+    <div class="ask-bar">
+      <input id="question" placeholder="Will it rain when I leave work?" aria-label="Weather question">
+      <button id="askButton" type="button">Ask Agent <span>→</span></button>
     </div>
-    <div class="alerts-toolbar" aria-label="Alert filters">
-      <select id="alertDateFilter" class="alert-date-select" aria-label="Filter alerts by date"><option value="all">All forecast dates</option></select>
-      <div class="alert-filters" role="group" aria-label="Filter alerts by severity">
-        <button type="button" class="alert-filter active" data-severity="ALL">All</button>
-        <button type="button" class="alert-filter" data-severity="HIGH">High</button>
-        <button type="button" class="alert-filter" data-severity="MODERATE">Moderate</button>
-      </div>
-    </div>
-    <div id="alerts" class="alerts"><div class="muted">Run an analysis to detect hazards.</div></div>
-  </section>
-
-  <section class="card agent" aria-labelledby="agent-title">
-    <div class="agent-header">
-      <div>
-        <div class="section-label">AI Weather Agent</div>
-        <h2 id="agent-title">Ask about your day.</h2>
-        <p class="agent-sub">Get a practical answer about rain, travel, outdoor plans, safety, or the forecast.</p>
-      </div>
-      <span class="agent-badge">✨ Ask anything</span>
-    </div>
-    <div class="ask">
-      <input id="question" placeholder="Ask about Kolkata weather…" aria-label="Weather question">
-      <button id="askButton" type="button">Ask Agent</button>
-    </div>
-    <div class="suggestion-heading"><span>Try asking</span><span id="suggestionContext">Kolkata</span></div>
+    <div class="suggestion-heading"><span>Popular questions</span><span id="suggestionContext">Kolkata</span></div>
     <div class="suggestion-categories" role="tablist" aria-label="Question categories">
       <button type="button" class="suggestion-tab active" data-category="forecast">Forecast</button>
       <button type="button" class="suggestion-tab" data-category="travel">Travel</button>
