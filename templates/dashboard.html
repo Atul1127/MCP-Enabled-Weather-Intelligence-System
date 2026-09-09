@@ -18,7 +18,7 @@
     <div class="location" role="search">
       <span class="search-icon" aria-hidden="true">⌕</span>
       <input id="location" value="Kolkata" placeholder="Indian city" aria-label="City">
-      <button id="analyze" onclick="loadWeather()">Analyze</button>
+      <button id="analyze" type="button">Analyze</button>
     </div>
   </header>
 
@@ -91,9 +91,9 @@
     <div class="alerts-toolbar" aria-label="Alert filters">
       <select id="alertDateFilter" class="alert-date-select" aria-label="Filter alerts by date"><option value="all">All forecast dates</option></select>
       <div class="alert-filters" role="group" aria-label="Filter alerts by severity">
-        <button class="alert-filter active" data-severity="ALL" onclick="setAlertSeverity('ALL')">All</button>
-        <button class="alert-filter" data-severity="HIGH" onclick="setAlertSeverity('HIGH')">High</button>
-        <button class="alert-filter" data-severity="MODERATE" onclick="setAlertSeverity('MODERATE')">Moderate</button>
+        <button type="button" class="alert-filter active" data-severity="ALL">All</button>
+        <button type="button" class="alert-filter" data-severity="HIGH">High</button>
+        <button type="button" class="alert-filter" data-severity="MODERATE">Moderate</button>
       </div>
     </div>
     <div id="alerts" class="alerts"><div class="muted">Run an analysis to detect hazards.</div></div>
@@ -110,14 +110,14 @@
     </div>
     <div class="ask">
       <input id="question" placeholder="Ask about Kolkata weather…" aria-label="Weather question">
-      <button id="askButton" onclick="askAgent()">Ask Agent</button>
+      <button id="askButton" type="button">Ask Agent</button>
     </div>
     <div class="suggestion-heading"><span>Try asking</span><span id="suggestionContext">Kolkata</span></div>
     <div class="suggestion-categories" role="tablist" aria-label="Question categories">
-      <button class="suggestion-tab active" data-category="forecast" onclick="setSuggestionCategory('forecast')">Forecast</button>
-      <button class="suggestion-tab" data-category="travel" onclick="setSuggestionCategory('travel')">Travel</button>
-      <button class="suggestion-tab" data-category="outdoor" onclick="setSuggestionCategory('outdoor')">Outdoor</button>
-      <button class="suggestion-tab" data-category="safety" onclick="setSuggestionCategory('safety')">Safety</button>
+      <button type="button" class="suggestion-tab active" data-category="forecast">Forecast</button>
+      <button type="button" class="suggestion-tab" data-category="travel">Travel</button>
+      <button type="button" class="suggestion-tab" data-category="outdoor">Outdoor</button>
+      <button type="button" class="suggestion-tab" data-category="safety">Safety</button>
     </div>
     <div id="suggestions" class="suggestions" aria-label="Suggested questions"></div>
     <div id="askStatus" class="status" aria-live="polite"></div>
