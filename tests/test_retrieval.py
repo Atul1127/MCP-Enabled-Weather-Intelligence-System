@@ -42,7 +42,7 @@ def test_build_context_creates_citations():
         "bm25_score": 4.5,
     }]
 
-    context, sources = compress("rain in Kolkata", documents)
+    context, sources = compress(documents)
 
     assert "[S1]" in context
     assert "Kolkata" in context
