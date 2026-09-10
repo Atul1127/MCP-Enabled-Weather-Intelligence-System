@@ -17,7 +17,7 @@ def _stable_id(row: dict) -> str:
 
 
 def load_corpus(path: str | Path = "data/weather_knowledge.jsonl") -> int:
-    lakebase.ensure_weather_tables(embedding_dim=384)
+    """Index the corpus into an already-initialized database."""
     rows = [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
     if not rows:
         return 0
@@ -45,4 +45,5 @@ def load_corpus(path: str | Path = "data/weather_knowledge.jsonl") -> int:
 
 
 if __name__ == "__main__":
+    lakebase.ensure_weather_tables(embedding_dim=384)
     print(f"Loaded {load_corpus()} documents into PostgreSQL")
