@@ -17,12 +17,19 @@ ENV DATABASE_BACKEND=local \
     DATABASE_URL=postgresql://weather_user:weather_password@localhost:5432/weather_rag \
     WEATHER_RAG_BACKEND=postgres \
     WEATHER_RAG_DENSE=0 \
+    WEATHER_RAG_REQUIRE_SCHEMA=1 \
+    WEATHER_DB_CONNECT_TIMEOUT=10 \
+    WEATHER_DB_STATEMENT_TIMEOUT_MS=10000 \
+    WEATHER_DB_LOCK_TIMEOUT_MS=5000 \
     GEMINI_MODEL=gemini-3.6-flash \
-    GEMINI_FALLBACK_MODELS=gemini-3.5-flash-lite,gemini-2.5-flash-lite \
+    GEMINI_FALLBACK_MODELS=gemini-3.5-flash-lite \
     GEMINI_THINKING_LEVEL=low \
     FLASK_RUN_HOST=0.0.0.0 \
     FLASK_RUN_PORT=8000 \
-    WEATHER_ALLOW_SYNC=0
+    WEATHER_ALLOW_SYNC=0 \
+    WEATHER_MCP_TIMEOUT=20 \
+    WEATHER_RAG_MCP_TIMEOUT=12 \
+    WEATHER_MCP_RETRIES=1
 
 RUN chown -R appuser:appuser /app
 USER appuser
@@ -30,6 +37,6 @@ USER appuser
 EXPOSE 8000
 
 HEALTHCHECK --interval=15s --timeout=5s --retries=5 --start-period=20s \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=3)"
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"
 
 CMD ["gunicorn", "--config", "docker/gunicorn.conf.py", "app:app"]
