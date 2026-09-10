@@ -47,7 +47,16 @@ CREATE INDEX IF NOT EXISTS idx_weather_embeddings_document_id ON weather_embeddi
 CREATE INDEX IF NOT EXISTS idx_weather_embeddings_embedding
     ON weather_embeddings USING hnsw (embedding vector_cosine_ops);
 
+-- concat_ws() is STABLE rather than IMMUTABLE, so PostgreSQL rejects it in an
+-- expression index. Build the equivalent text with immutable concatenation.
 CREATE INDEX IF NOT EXISTS idx_weather_documents_fts
     ON weather_documents USING gin (
-        to_tsvector('simple', concat_ws(' ', location, state, district, headline, narrative_text))
+        to_tsvector(
+            'simple',
+            COALESCE(location, '') || ' ' ||
+            COALESCE(state, '') || ' ' ||
+            COALESCE(district, '') || ' ' ||
+            COALESCE(headline, '') || ' ' ||
+            COALESCE(narrative_text, '')
+        )
     );
