@@ -1,8 +1,6 @@
 """PostgreSQL + pgvector retrieval backend."""
 from __future__ import annotations
-
 from typing import Any
-
 import lakebase
 
 
@@ -10,16 +8,10 @@ class PostgresRagStore:
     """Database-backed RAG store using PostgreSQL full-text + pgvector retrieval."""
 
     def __init__(self) -> None:
-        lakebase.ensure_weather_tables(embedding_dim=384)
-        self._bootstrap_corpus()
-
-    @staticmethod
-    def _bootstrap_corpus() -> None:
-        rows = lakebase.run_query("SELECT COUNT(*) AS count FROM weather_documents WHERE source = 'local-weather-guide'")
-        if rows and int(rows[0]["count"]) > 0:
-            return
-        from rag.index_local_corpus import load_corpus
-        load_corpus()
+        # Schema creation and corpus indexing belong to deployment/setup jobs,
+        # never to an end-user retrieval request. This keeps DB failures fast
+        # and prevents every RAG request from running DDL and bootstrap queries.
+        self._require_schema = str(__import__("os").environ.get("WEATHER_RAG_REQUIRE_SCHEMA", "1")).lower() not in {"0", "false", "no"}
 
     @staticmethod
     def _where(location: str | None, state: str | None, source_type: str | None) -> tuple[str, list[Any]]:
@@ -41,9 +33,6 @@ class PostgresRagStore:
         return [str(row["id"]) for row in lakebase.run_query(f"SELECT d.id FROM weather_documents d WHERE {where}", tuple(params))]
 
     def _ids_clause(self, allowed: list[str] | None) -> tuple[str, list[Any]]:
-        # None means no filtering was requested. An empty list means filtering
-        # was requested but no documents matched; never silently fall back to
-        # the entire corpus in that case.
         if allowed is None:
             return "", []
         if not allowed:
@@ -52,16 +41,9 @@ class PostgresRagStore:
 
     @staticmethod
     def _fts_or_query(query: str) -> str:
-        """Build a safe OR tsquery from natural-language tokens.
-
-        plainto_tsquery uses AND semantics, which can make a normal question
-        require every word to occur in one document. Tokenizing here and joining
-        normalized terms with OR keeps lexical retrieval useful for long queries.
-        """
         import re
         tokens = re.findall(r"[\w]+", query, flags=re.UNICODE)
-        tokens = [token for token in tokens if len(token) >= 3]
-        return " | ".join(tokens[:16])
+        return " | ".join(token for token in tokens[:16] if len(token) >= 3)
 
     def bm25_search(self, query: str, limit: int, allowed: list[str] | None = None) -> list[dict[str, Any]]:
         extra, extra_params = self._ids_clause(allowed)
@@ -77,8 +59,7 @@ class PostgresRagStore:
         matches = [dict(row) for row in rows if float(row.get("bm25_score") or 0) > 0]
         if matches:
             return matches
-
-        relaxed = PostgresRagStore._fts_or_query(query)
+        relaxed = self._fts_or_query(query)
         if not relaxed:
             return []
         rows = lakebase.run_query(f"""
@@ -97,9 +78,8 @@ class PostgresRagStore:
         extra, extra_params = self._ids_clause(allowed)
         rows = lakebase.run_query(f"""
             SELECT d.id, d.location, d.state, d.district, d.source, d.source_type,
-                   d.headline, d.narrative_text, d.forecast_date, d.temperature_min_c,
-                   d.temperature_max_c, d.rainfall_mm, d.precipitation_probability,
-                   d.weather_code, d.severity, e.chunk_text,
+                   d.headline, d.narrative_text, d.temperature_min_c, d.temperature_max_c,
+                   d.rainfall_mm, d.precipitation_probability, d.weather_code, d.severity, e.chunk_text,
                    1 - (e.embedding <=> %s::vector) AS dense_score
             FROM weather_embeddings e JOIN weather_documents d ON d.id = e.document_id
             WHERE 1 = 1 {extra}
