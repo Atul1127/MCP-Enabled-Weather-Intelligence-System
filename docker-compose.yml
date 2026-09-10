@@ -18,6 +18,24 @@ services:
       timeout: 5s
       retries: 10
 
+  bootstrap:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: weather-rag-bootstrap
+    init: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_BACKEND: local
+      DATABASE_URL: postgresql://weather_user:${POSTGRES_PASSWORD:-weather_password}@postgres:5432/weather_rag
+      WEATHER_DB_CONNECT_TIMEOUT: 10
+      WEATHER_DB_STATEMENT_TIMEOUT_MS: 30000
+      WEATHER_DB_LOCK_TIMEOUT_MS: 10000
+    command: ["python", "scripts/init_database.py"]
+    restart: "no"
+
   api:
     build:
       context: .
@@ -26,8 +44,8 @@ services:
     restart: unless-stopped
     init: true
     depends_on:
-      postgres:
-        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -37,11 +55,19 @@ services:
       DATABASE_URL: postgresql://weather_user:${POSTGRES_PASSWORD:-weather_password}@postgres:5432/weather_rag
       WEATHER_RAG_BACKEND: postgres
       WEATHER_RAG_DENSE: "0"
+      WEATHER_RAG_REQUIRE_SCHEMA: "1"
+      WEATHER_DB_CONNECT_TIMEOUT: ${WEATHER_DB_CONNECT_TIMEOUT:-10}
+      WEATHER_DB_STATEMENT_TIMEOUT_MS: ${WEATHER_DB_STATEMENT_TIMEOUT_MS:-10000}
+      WEATHER_DB_LOCK_TIMEOUT_MS: ${WEATHER_DB_LOCK_TIMEOUT_MS:-5000}
       GEMINI_API_KEY: ${GEMINI_API_KEY:?GEMINI_API_KEY must be set}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.6-flash}
       GEMINI_FALLBACK_MODELS: ${GEMINI_FALLBACK_MODELS:-gemini-3.5-flash-lite}
       GEMINI_THINKING_LEVEL: ${GEMINI_THINKING_LEVEL:-low}
       GEMINI_MAX_OUTPUT_TOKENS: ${GEMINI_MAX_OUTPUT_TOKENS:-700}
+      WEATHER_MAX_TOOL_CALLS: ${WEATHER_MAX_TOOL_CALLS:-16}
+      WEATHER_MCP_TIMEOUT: ${WEATHER_MCP_TIMEOUT:-20}
+      WEATHER_RAG_MCP_TIMEOUT: ${WEATHER_RAG_MCP_TIMEOUT:-12}
+      WEATHER_MCP_RETRIES: ${WEATHER_MCP_RETRIES:-1}
       WEATHER_TRACE_PATH: /app/observability/traces.jsonl
       FLASK_RUN_HOST: 0.0.0.0
       FLASK_RUN_PORT: 8000
