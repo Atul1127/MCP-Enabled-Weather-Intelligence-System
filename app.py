@@ -25,7 +25,6 @@ def _safe_location(value: object) -> str:
 
 
 def _sync_authorized() -> bool:
-    """Keep the write-heavy sync endpoint disabled unless explicitly enabled."""
     if os.environ.get("WEATHER_ALLOW_SYNC", "0") != "1":
         return False
     configured = os.environ.get("WEATHER_ADMIN_API_KEY")
@@ -40,28 +39,20 @@ def dashboard():
 
 @app.route("/healthz", methods=["GET"])
 def healthz():
-    """Liveness probe: only confirms that the HTTP process is running."""
     return jsonify({"status": "ok", "service": "indian-weather-rag"})
 
 
 @app.route("/readyz", methods=["GET"])
 def readyz():
-    """Readiness probe for dependencies required by the main API path.
-
-    External APIs are intentionally not probed here because readiness should
-    remain fast and deterministic; transient provider failures are handled by
-    the request-level retry/error paths.
-    """
-    checks = {
-        "gemini_api_key": bool(os.environ.get("GEMINI_API_KEY")),
-        "rag_store": False,
-    }
+    """Readiness probe that verifies configured dependencies without DDL."""
+    checks = {"gemini_api_key": bool(os.environ.get("GEMINI_API_KEY")), "rag_store": False, "database": False, "weather_schema": False}
     try:
         rag_service.get_rag_pipeline()
         checks["rag_store"] = True
+        checks["database"] = lakebase.check_connection()
+        checks["weather_schema"] = lakebase.check_weather_schema() if checks["database"] else False
     except Exception:
         logger.exception("RAG readiness check failed")
-
     ready = all(checks.values())
     return jsonify({"status": "ready" if ready else "not_ready", "checks": checks}), 200 if ready else 503
 
@@ -78,13 +69,7 @@ def weather_current():
         if not details:
             return jsonify({"error": "Location could not be resolved"}), 404
         weather = weather_client.fetch_weather(details["latitude"], details["longitude"])
-        return jsonify({
-            "success": True,
-            "location": details,
-            "current": weather.get("current", {}),
-            "hourly": weather.get("hourly", {}),
-            "daily": weather.get("daily", {}),
-        })
+        return jsonify({"success": True, "location": details, "current": weather.get("current", {}), "hourly": weather.get("hourly", {}), "daily": weather.get("daily", {})})
     except Exception:
         logger.exception("Current weather request failed")
         return jsonify({"error": "Failed to fetch weather"}), 502
@@ -131,7 +116,6 @@ def weather_alerts():
 
 @app.route("/weather/ask", methods=["POST"])
 def weather_ask():
-    """RAG-only knowledge endpoint; the full agent is exposed separately."""
     body = request.get_json(silent=True) or {}
     query = body.get("query")
     if not query or not isinstance(query, str):
@@ -156,11 +140,13 @@ def weather_ask():
 
 @app.route("/weather/agent", methods=["POST"])
 def weather_agent():
-    """Run the canonical LangGraph + MCP + RAG WeatherAgent."""
     body = request.get_json(silent=True) or {}
     query = body.get("query")
     if not isinstance(query, str) or not query.strip():
         return jsonify({"error": "Missing or invalid 'query' in request body"}), 400
+    security = inspect_text(query)
+    if security["suspicious"]:
+        return jsonify({"error": "Query contains a blocked prompt-injection signal"}), 400
     try:
         query = validate_user_query(query)
     except ValueError as exc:
@@ -218,7 +204,4 @@ def handle_exception(error):
 
 
 if __name__ == "__main__":
-    host = os.getenv("FLASK_RUN_HOST", "0.0.0.0")
-    port = int(os.getenv("FLASK_RUN_PORT", "8000"))
-    debug = os.getenv("FLASK_DEBUG", "0") == "1"
-    app.run(debug=debug, host=host, port=port)
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
