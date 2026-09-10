@@ -1,11 +1,9 @@
 """Resilient MCP execution layer with policy, validation, timeouts and traces."""
 from __future__ import annotations
-
 import asyncio
 import json
 import os
 from typing import Any
-
 from mcp_client import call_tool
 from observability import span
 from .security import validate_observation, validate_tool_arguments, validate_tool_call
@@ -15,18 +13,18 @@ RAG_TOOLS = frozenset({"search_weather", "ask_weather"})
 
 
 class MCPExecutor:
-    """Execute MCP calls through a policy and validation boundary."""
-
     def __init__(self, session: Any, allowed_tools: set[str], *, timeout_seconds: float | None = None, max_retries: int | None = None, trace_id: str = "unknown") -> None:
         self.session = session
         self.allowed_tools = frozenset(allowed_tools)
-        self.timeout_seconds = float(os.environ.get("WEATHER_MCP_TIMEOUT", "60")) if timeout_seconds is None else float(timeout_seconds)
-        self.rag_timeout_seconds = float(os.environ.get("WEATHER_RAG_MCP_TIMEOUT", "90"))
-        self.max_retries = int(os.environ.get("WEATHER_MCP_RETRIES", "2")) if max_retries is None else int(max_retries)
+        self.timeout_seconds = float(os.environ.get("WEATHER_MCP_TIMEOUT", "20")) if timeout_seconds is None else float(timeout_seconds)
+        self.rag_timeout_seconds = float(os.environ.get("WEATHER_RAG_MCP_TIMEOUT", "12"))
+        self.max_retries = int(os.environ.get("WEATHER_MCP_RETRIES", "1")) if max_retries is None else int(max_retries)
         self.trace_id = trace_id
         self._successful_results: dict[str, Any] = {}
-        if self.timeout_seconds <= 0 or self.rag_timeout_seconds <= 0: raise ValueError("timeout_seconds must be positive")
-        if self.max_retries < 0: raise ValueError("max_retries cannot be negative")
+        if self.timeout_seconds <= 0 or self.rag_timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        if self.max_retries < 0:
+            raise ValueError("max_retries cannot be negative")
 
     async def _call_with_retry(self, name: str, args: dict[str, Any]) -> Any:
         last_error: Exception | None = None
@@ -74,17 +72,21 @@ class MCPExecutor:
                 validate_tool_call(name, args)
                 key = self._key(name, args)
                 cached = self._successful_results.get(key)
-                if cached is not None: return name, args, cached
+                if cached is not None:
+                    return name, args, cached
                 task = in_flight.get(key)
                 if task is None:
                     task = asyncio.create_task(self._call_with_retry(name, args))
                     in_flight[key] = task
-                try: result = await task
+                try:
+                    result = await task
                 finally:
-                    if key in in_flight and in_flight[key].done(): in_flight.pop(key, None)
+                    if key in in_flight and in_flight[key].done():
+                        in_flight.pop(key, None)
                 validate_observation(result)
                 result = self._sanitize_result(result)
-                if not (isinstance(result, dict) and result.get("success") is False): self._successful_results[key] = result
+                if not (isinstance(result, dict) and result.get("success") is False):
+                    self._successful_results[key] = result
                 return name, args, result
             except ValueError as exc:
                 return name, args, {"success": False, "error": str(exc), "error_type": "validation_error"}
