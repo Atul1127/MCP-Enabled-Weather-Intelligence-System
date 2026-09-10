@@ -22,7 +22,8 @@ def build_weather_graph(
 
     Deterministic plans may set ``next_action=tool`` and ``pending_calls`` in the
     planner result. Those plans bypass the model-backed execution-selection round.
-    Normal/agentic plans continue through the reasoner exactly as before.
+    Recovery remains bounded and does not repeatedly retry a tool call that already
+    failed with a timeout or execution error.
     """
     if max_rounds < 1 or max_retries < 0:
         raise ValueError("max_rounds must be >= 1 and max_retries must be >= 0")
@@ -53,7 +54,7 @@ def build_weather_graph(
         return "verifier"
 
     def after_executor(state: GraphState) -> str:
-        """Verify immediately only when a real required plan is satisfied."""
+        """Verify when required evidence exists; otherwise recover only from model/planning issues."""
         plan = state.get("plan") or {}
         observations = state.get("observations") or []
         successful = {
@@ -70,13 +71,39 @@ def build_weather_graph(
         satisfied = bool(required_groups) and all(
             group.intersection(successful) for group in required_groups if group
         )
-        return "verifier" if satisfied else "reasoner"
+        if satisfied:
+            return "verifier"
+
+        # A timeout/execution failure is already terminal for this tool attempt.
+        # Do not ask Gemini to repeat a failing call several times and multiply
+        # provider latency. The verifier will surface the failure cleanly.
+        required_tools = {tool for group in required_groups for tool in group}
+        for observation in observations:
+            if observation.get("tool") not in required_tools:
+                continue
+            result = observation.get("result")
+            if isinstance(result, dict) and result.get("success") is False:
+                error_type = str(result.get("error_type") or "")
+                if error_type in {"timeout", "execution_error"}:
+                    return "verifier"
+        return "reasoner"
 
     def after_verifier(state: GraphState) -> str:
         verification = state.get("verification") or {}
         if verification.get("sufficient"):
             return "synthesizer"
         retry_count = int(state.get("retry_count", 0))
+        # Never repeat a failed MCP timeout/execution path. Recovery remains for
+        # missing/incorrect planning and argument-selection cases.
+        observations = state.get("observations") or []
+        terminal_mcp_failure = any(
+            isinstance(item.get("result"), dict)
+            and item["result"].get("success") is False
+            and str(item["result"].get("error_type") or "") in {"timeout", "execution_error"}
+            for item in observations
+        )
+        if terminal_mcp_failure:
+            return "synthesizer"
         if retry_count <= max_retries and int(state.get("rounds", 0)) < max_rounds:
             return "reasoner"
         return "synthesizer"
