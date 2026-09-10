@@ -13,6 +13,9 @@ ALERT_MARKERS = (
     "weather alert", "weather alerts", "weather hazard", "weather hazards",
     "dangerous weather", "actionable weather hazard", "actionable weather hazards",
     "dangerous weather alert", "dangerous weather alerts",
+    "what weather risks should i watch for", "what weather risk should i watch for",
+    "risks should i watch for", "risk should i watch for", "weather warnings",
+    "weather warning", "warnings for", "warning for", "severe weather expected",
 )
 KNOWLEDGE_MARKERS = (
     "typically", "usually", "what causes", "what does", "why does", "how does",
@@ -36,7 +39,7 @@ STRONG_CONCEPTUAL_MARKERS = (
     "heat wave", "reduce visibility", "visibility", "affect outdoor activities", "weather conditions can",
 )
 RISK_MARKERS = (
-    "safe", "risk", "suitable", "should i", "play", "run", "hike", "travel", "outdoor",
+    "safe", "risk", "risky", "suitable", "should i", "play", "run", "running", "hike", "travel", "outdoor",
 )
 CURRENT_MARKERS = (
     "current weather", "current conditions", "weather right now", "weather now",
@@ -60,6 +63,9 @@ def classify(query: str) -> str:
     text = query.lower().strip()
     if _any_marker(text, COMPARISON_MARKERS):
         return "comparison"
+    # Explicit alert/warning questions must win over generic "risk" wording.
+    if _any_marker(text, ALERT_MARKERS):
+        return "alerts"
     # Explicit present-condition phrasing wins over broad conceptual words.
     if _any_marker(text, CURRENT_MARKERS):
         return "current_weather"
@@ -70,8 +76,6 @@ def classify(query: str) -> str:
         return "knowledge"
     if _any_marker(text, RISK_MARKERS):
         return "activity_risk"
-    if _any_marker(text, ALERT_MARKERS):
-        return "alerts"
     if _any_marker(text, LIVE_MARKERS):
         return "live_weather"
     if _any_marker(text, KNOWLEDGE_MARKERS):
