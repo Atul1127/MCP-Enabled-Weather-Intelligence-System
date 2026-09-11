@@ -1,7 +1,7 @@
 import asyncio
 
 import app
-import llm_provider
+import services.llm as llm_provider
 
 
 def test_agent_endpoint_rejects_empty_query():
