@@ -50,7 +50,7 @@ class RAGPipeline:
     def _get_store(self) -> Any:
         if self._store is None:
             if self.backend in {"local", "jsonl", "file"}:
-                from local_rag_store import get_store
+                from rag.local_rag_store import get_store
             elif self.backend in {"postgres", "postgresql", "pgvector", "lakebase"}:
                 from rag.postgres_store import get_store
             else:
