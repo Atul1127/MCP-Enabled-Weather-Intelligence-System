@@ -1,4 +1,4 @@
-import mcp_server
+from mcp_integration import mcp_server
 
 
 def test_current_time_of_day_uses_live_sunrise_sunset():
