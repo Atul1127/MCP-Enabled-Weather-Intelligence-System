@@ -4,7 +4,7 @@ This document records the verified release shape of the MCP-Enabled Weather Inte
 
 ## Verified application state
 
-- Automated suite: **122 tests passing locally**.
+- Automated regression suite is included and should be run before release.
 - Balanced live agent stress suite: **100 generated evaluation cases** covering current weather, forecast, alerts, activity risk, and weather knowledge across multiple Indian cities.
 - Railway deployment: live and verified through health/readiness checks and representative agent/RAG/API flows.
 
