@@ -7,8 +7,8 @@ from typing import Any, AsyncIterator
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-SERVER_PATH = os.path.join(PROJECT_ROOT, "mcp_server.py")
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SERVER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcp_server.py")
 
 def _python_executable() -> str:
     configured = os.environ.get("WEATHER_PYTHON")
