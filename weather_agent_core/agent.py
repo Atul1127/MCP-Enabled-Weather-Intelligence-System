@@ -7,9 +7,9 @@ import os
 from typing import Any
 
 from google.genai import types
-from llm_provider import generate_with_tools
-from mcp_client import connect, discover_tools
-from observability import emit, new_trace_id, span
+from services.llm import generate_with_tools
+from mcp.mcp_client import connect, discover_tools
+from services.observability import emit, new_trace_id, span
 from rag.citations.validator import validate as validate_citations
 
 from .decomposer import decompose
@@ -105,7 +105,6 @@ class WeatherAgent:
                 preferred = "search_weather" if "search_weather" in group else sorted(group)[0]
                 calls.append(types.FunctionCall(name=preferred, args=cls._infer_tool_args(preferred, query)))
 
-        # Enforce explicit temporal constraints whenever the query gives one.
         normalized_query = " ".join(query.lower().split())
         if "tomorrow" in normalized_query or "today" in normalized_query:
             target_date = "tomorrow" if "tomorrow" in normalized_query else "today"
