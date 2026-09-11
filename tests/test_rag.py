@@ -1,6 +1,6 @@
 import pytest
 
-import rag_service
+from rag import rag_service
 from rag.pipeline import RetrievalResult
 from rag.query.analyzer import QueryPlan
 
