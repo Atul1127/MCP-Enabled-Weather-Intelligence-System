@@ -1,6 +1,6 @@
 import json
 
-import observability
+from services import observability
 
 
 def test_nested_spans_have_parent_ids(tmp_path, monkeypatch):
