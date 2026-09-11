@@ -10,6 +10,7 @@ from mcp.client.stdio import stdio_client
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SERVER_PATH = os.path.join(PROJECT_ROOT, "mcp_integration", "mcp_server.py")
 
+
 def _python_executable() -> str:
     configured = os.environ.get("WEATHER_PYTHON")
     if configured and os.path.isfile(configured):
@@ -20,6 +21,7 @@ def _python_executable() -> str:
     venv_python = os.path.join(PROJECT_ROOT, ".venv", "Scripts", "python.exe")
     return venv_python if os.path.isfile(venv_python) else current
 
+
 @asynccontextmanager
 async def connect(trace_id: str | None = None) -> AsyncIterator[ClientSession]:
     """Open an MCP stdio session using the project's dependency environment."""
@@ -28,7 +30,14 @@ async def connect(trace_id: str | None = None) -> AsyncIterator[ClientSession]:
     server_env.update({"WEATHER_PYTHON": python, "PYTHONUNBUFFERED": "1"})
     if trace_id:
         server_env["WEATHER_TRACE_ID"] = trace_id
-    server_params = StdioServerParameters(command=python, args=[SERVER_PATH], env=server_env, cwd=PROJECT_ROOT)
+    # Launch as a module so the repository root remains on sys.path. This is
+    # required because the MCP server imports existing root-level modules.
+    server_params = StdioServerParameters(
+        command=python,
+        args=["-m", "mcp_integration.mcp_server"],
+        env=server_env,
+        cwd=PROJECT_ROOT,
+    )
     async with stdio_client(server_params) as (read, write):
         async with ClientSession(read, write) as session:
             try:
@@ -37,6 +46,7 @@ async def connect(trace_id: str | None = None) -> AsyncIterator[ClientSession]:
                 raise RuntimeError(f"MCP server failed to initialize using {python}: {exc}") from exc
             yield session
 
+
 def _tool_schema(tool: Any) -> dict[str, Any]:
     schema = getattr(tool, "input_schema", None)
     if schema is None:
@@ -44,6 +54,7 @@ def _tool_schema(tool: Any) -> dict[str, Any]:
     if hasattr(schema, "model_dump"):
         schema = schema.model_dump(by_alias=True, exclude_none=True)
     return {"type": "function", "function": {"name": tool.name, "description": tool.description or "", "parameters": schema or {"type": "object", "properties": {}}}}
+
 
 async def discover_tools(session: ClientSession) -> list[dict[str, Any]]:
     response = await session.list_tools()
@@ -54,6 +65,7 @@ async def discover_tools(session: ClientSession) -> list[dict[str, Any]]:
             if isinstance(item, tuple) and item and item[0] == "tools":
                 tools.extend(item[1])
     return [_tool_schema(tool) for tool in tools]
+
 
 async def discover_resources(session: ClientSession) -> list[dict[str, Any]]:
     """Discover concrete MCP resources and resource templates."""
@@ -69,6 +81,7 @@ async def discover_resources(session: ClientSession) -> list[dict[str, Any]]:
         for item in templates
     ]
 
+
 async def read_resource(session: ClientSession, uri: str) -> list[dict[str, Any]]:
     """Read an MCP resource and normalize its contents."""
     result = await session.read_resource(uri)
@@ -78,6 +91,7 @@ async def read_resource(session: ClientSession, uri: str) -> list[dict[str, Any]
         normalized.append({"uri": str(getattr(item, "uri", uri)), "mime_type": getattr(item, "mime_type", None) or getattr(item, "mimeType", None), "text": getattr(item, "text", None), "blob": getattr(item, "blob", None)})
     return normalized
 
+
 async def discover_prompts(session: ClientSession) -> list[dict[str, Any]]:
     """Discover reusable MCP prompt templates and their argument schemas."""
     response = await session.list_prompts()
@@ -86,6 +100,7 @@ async def discover_prompts(session: ClientSession) -> list[dict[str, Any]]:
         {"name": str(getattr(item, "name", "")), "description": str(getattr(item, "description", "") or ""), "arguments": [{"name": str(getattr(arg, "name", "")), "description": str(getattr(arg, "description", "") or ""), "required": bool(getattr(arg, "required", False))} for arg in (getattr(item, "arguments", None) or [])]}
         for item in prompts
     ]
+
 
 async def get_prompt(session: ClientSession, name: str, arguments: dict[str, str] | None = None) -> list[dict[str, Any]]:
     """Render an MCP prompt and normalize its messages."""
@@ -97,6 +112,7 @@ async def get_prompt(session: ClientSession, name: str, arguments: dict[str, str
         text = getattr(content, "text", None) if content is not None else None
         normalized.append({"role": str(getattr(message, "role", "user")), "text": text, "content": content})
     return normalized
+
 
 async def call_tool(session: ClientSession, name: str, arguments: dict[str, Any] | None = None) -> Any:
     """Call an MCP tool and normalize structured/error responses."""
@@ -117,6 +133,7 @@ async def call_tool(session: ClientSession, name: str, arguments: dict[str, Any]
     texts = [getattr(item, "text", str(item)) for item in content]
     return {"success": not bool(is_error), "error": "MCP tool returned an error" if is_error else None, "content": texts}
 
+
 async def main() -> None:
     async with connect() as session:
         tools = await discover_tools(session)
@@ -131,6 +148,7 @@ async def main() -> None:
             print(f"- {prompt['name']}: {prompt['description']}")
         print("\nKolkata tool result:")
         print(await call_tool(session, "get_weather", {"location": "Kolkata"}))
+
 
 if __name__ == "__main__":
     import asyncio
