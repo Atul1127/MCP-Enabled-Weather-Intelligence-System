@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-import llm_provider
-from llm_provider import _generate_with_fallback, _gemini_error_kind, _gemini_retryable
+import services.llm as llm_provider
+from services.llm import _generate_with_fallback, _gemini_error_kind, _gemini_retryable
 
 
 class FakeQuotaError(Exception):
