@@ -9,8 +9,9 @@ import secrets
 from flask import Flask, jsonify, render_template, request
 
 import lakebase
-import rag_service
+from rag import service as rag_service
 import weather_client
+from services import llm as llm_provider
 from weather_agent_core import WeatherAgent
 from weather_agent_core.security import inspect_text, validate_location, validate_top_k, validate_user_query
 
