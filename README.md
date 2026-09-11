@@ -19,7 +19,7 @@ The deployed service exposes the same dashboard and API used by the local Docker
 - **Deterministic intelligence:** Hazard detection and activity-risk scoring are computed separately from LLM generation.
 - **Evidence-first answers:** Live weather, forecasts, alerts, risk results, and retrieved knowledge remain typed and auditable before synthesis.
 - **Production hardening:** Input validation, prompt-injection checks, MCP allowlists, bounded observations, retries, timeouts, non-root containers, dropped capabilities, read-only filesystems, and readiness checks.
-- **Evaluation:** Unit/integration tests plus retrieval, RAG, agent, answer-quality, and live end-to-end evaluation suites.
+- **Evaluation:** Unit/integration tests plus retrieval, RAG, agent, answer-quality, and balanced live stress evaluation suites.
 - **Interactive dashboard:** Current conditions, hourly forecast, 7-day forecast, application-level forecast risk, alerts, and an AI Weather Agent.
 
 ## Architecture
@@ -77,7 +77,7 @@ The production default keeps dense retrieval disabled, so the normal API image d
 
 ## Dashboard
 
-The web interface is organized around the information most useful for a weather decision:
+The web interface is organized around the information most useful to a weather decision:
 
 1. Location search
 2. Current weather
@@ -183,19 +183,13 @@ python -m pytest -q
 
 The current release has **122 tests passing** locally.
 
-Run the 16-case live agent evaluation:
-
-```bash
-python -m evaluation.agent_e2e_eval
-```
-
-Run the balanced stress evaluation deliberately because it consumes Gemini quota:
+Run the **balanced 100-case live stress evaluation** deliberately because it consumes Gemini quota:
 
 ```bash
 WEATHER_STRESS_LIMIT=100 WEATHER_STRESS_REPORT=/tmp/stress_report_100.json python -m evaluation.stress_eval
 ```
 
-The stress suite reports task success, tool-selection accuracy, argument accuracy for evaluable tool cases, and latency percentiles.
+The stress suite covers current-weather, forecast, alert, activity-risk, and weather-knowledge cases across multiple Indian cities. It reports task success, tool-selection accuracy, argument accuracy for evaluable tool cases, provider quota failures, and latency percentiles.
 
 ## Observability
 
