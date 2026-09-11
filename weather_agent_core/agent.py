@@ -8,7 +8,7 @@ from typing import Any
 
 from google.genai import types
 from services.llm import generate_with_tools
-from mcp.mcp_client import connect, discover_tools
+from mcp_integration.mcp_client import connect, discover_tools
 from services.observability import emit, new_trace_id, span
 from rag.citations.validator import validate as validate_citations
 
