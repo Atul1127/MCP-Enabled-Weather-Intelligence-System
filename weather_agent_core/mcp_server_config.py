@@ -17,5 +17,5 @@ def configured_servers() -> tuple[MCPServerConfig, ...]:
     """Return enabled server definitions without opening connections."""
     python = os.environ.get("WEATHER_PYTHON") or os.environ.get("PYTHON", "python")
     return (
-        MCPServerConfig("weather", python, ("mcp_server.py",)),
+        MCPServerConfig("weather", python, ("mcp_integration/mcp_server.py",)),
     )
