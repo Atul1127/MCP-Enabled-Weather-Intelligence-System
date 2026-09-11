@@ -1,6 +1,6 @@
 # MCP-Enabled Weather Intelligence System
 
-An **MCP-first weather intelligence platform for Indian locations** that combines live weather data, deterministic risk intelligence, hybrid RAG, Gemini tool calling, LangGraph orchestration, security boundaries, observability, and evaluation.
+An **MCP-first weather intelligence platform for Indian locations** that combines live weather data, deterministic risk intelligence, grounded RAG, Gemini tool calling, LangGraph orchestration, security boundaries, observability, and evaluation.
 
 ## Live Demo
 
@@ -102,8 +102,6 @@ GEMINI_THINKING_LEVEL=low
 GEMINI_MAX_OUTPUT_TOKENS=700
 ```
 
-The provider distinguishes quota exhaustion from transient failures: exhausted model quotas are not retried against the same model, while transient provider failures may be retried before moving to a fallback model.
-
 Never commit or paste real API keys. Rotate a key immediately if it has been exposed.
 
 ## Quick start
@@ -197,7 +195,23 @@ Run the balanced 100-case stress evaluation:
 WEATHER_STRESS_LIMIT=100 WEATHER_STRESS_REPORT=/tmp/stress_report_100.json python -m evaluation.stress_eval
 ```
 
-The stress suite records task success, tool-selection accuracy, argument accuracy for evaluable tool cases, and latency percentiles. Live evaluations consume Gemini quota and should be run deliberately.
+### Validated 100-case result
+
+The latest clean 100-case evaluation produced the following results:
+
+| Metric | Result |
+|---|---:|
+| Cases | **100** |
+| Task success rate | **95%** |
+| Tool-selection accuracy | **95%** |
+| Argument accuracy | **96.25%** |
+| Mean latency | **8.37 s** |
+| P50 latency | **7.28 s** |
+| P95 latency | **15.01 s** |
+
+The suite covers five balanced categories: current weather, forecast, alerts, activity risk, and weather knowledge/RAG. It records task success, tool-selection accuracy, argument accuracy for evaluable tool cases, and latency percentiles.
+
+These figures represent a live evaluation of the Gemini + MCP agent and should be treated as a benchmark snapshot rather than a universal guarantee of future responses.
 
 ## Runtime dependency boundary
 
