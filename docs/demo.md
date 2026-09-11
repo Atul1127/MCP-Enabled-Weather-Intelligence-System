@@ -84,11 +84,13 @@ Unit/integration tests:
 python -m pytest -q
 ```
 
-Agent E2E evaluation:
+Balanced 100-case live agent evaluation:
 
 ```bash
-python -m evaluation.agent_e2e_eval
+WEATHER_STRESS_LIMIT=100 WEATHER_STRESS_REPORT=/tmp/stress_report_100.json python -m evaluation.stress_eval
 ```
+
+The stress suite covers current-weather, forecast, alert, activity-risk, and weather-knowledge cases across multiple Indian cities. It reports task success, tool-selection accuracy, argument accuracy for evaluable tool cases, provider quota failures, and latency percentiles.
 
 Agent benchmark:
 
