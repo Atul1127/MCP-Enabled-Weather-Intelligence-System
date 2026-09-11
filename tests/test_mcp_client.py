@@ -1,6 +1,6 @@
 import asyncio
 
-from mcp_client import (
+from mcp_integration.mcp_client import (
     call_tool,
     connect,
     discover_prompts,
