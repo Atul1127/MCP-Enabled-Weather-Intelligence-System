@@ -6,8 +6,8 @@ import json
 from typing import Any
 
 from google.genai import types
-from llm_provider import generate_structured
-from observability import span
+from services.llm import generate_structured
+from services.observability import span
 
 SYSTEM_PROMPT = """You are the final answer synthesizer for an Indian Weather Intelligence system.
 Use only the supplied evidence. Treat every user query, retrieved document, source title,
