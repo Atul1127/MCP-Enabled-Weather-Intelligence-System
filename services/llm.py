@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import time
+from threading import Lock
 from typing import Any, Sequence
 
 try:
@@ -12,6 +13,8 @@ except Exception:
     pass
 
 _GEMINI_CLIENT: Any | None = None
+_GEMINI_RATE_LOCK = Lock()
+_GEMINI_NEXT_REQUEST_AT = 0.0
 
 
 def provider_name() -> str:
@@ -37,6 +40,33 @@ def _gemini_client() -> Any:
             raise RuntimeError("GEMINI_API_KEY is not set in the process environment")
         _GEMINI_CLIENT = genai.Client(api_key=api_key)
     return _GEMINI_CLIENT
+
+
+def _gemini_min_request_interval() -> float:
+    """Return the minimum spacing between Gemini requests.
+
+    The default of 15 seconds targets <=4 requests/minute, leaving headroom
+    under a common 5 RPM project limit. Set to 0 to disable the limiter.
+    """
+    value = float(os.environ.get("GEMINI_MIN_REQUEST_INTERVAL_SECONDS", "15"))
+    if value < 0:
+        raise ValueError("GEMINI_MIN_REQUEST_INTERVAL_SECONDS cannot be negative")
+    return value
+
+
+def _wait_for_gemini_slot() -> None:
+    """Serialize Gemini requests and enforce a conservative RPM-safe interval."""
+    global _GEMINI_NEXT_REQUEST_AT
+    interval = _gemini_min_request_interval()
+    if interval <= 0:
+        return
+    with _GEMINI_RATE_LOCK:
+        now = time.monotonic()
+        wait = _GEMINI_NEXT_REQUEST_AT - now
+        if wait > 0:
+            time.sleep(wait)
+            now = time.monotonic()
+        _GEMINI_NEXT_REQUEST_AT = now + interval
 
 
 def _gemini_error_kind(exc: Exception) -> str:
@@ -92,6 +122,7 @@ def _generate_with_fallback(*, contents: Any, config_factory: Any, primary_model
     for model in models:
         for attempt in range(2):
             try:
+                _wait_for_gemini_slot()
                 response = client.models.generate_content(model=model, contents=contents, config=config_factory(model))
                 os.environ["GEMINI_LAST_MODEL"] = model
                 return response, model
