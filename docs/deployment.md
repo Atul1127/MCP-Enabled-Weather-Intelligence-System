@@ -60,7 +60,7 @@ Before declaring a deployment ready:
 
 ```bash
 python -m pytest -q
-python -m evaluation.agent_e2e_eval
+WEATHER_STRESS_LIMIT=100 WEATHER_STRESS_REPORT=/tmp/stress_report_100.json python -m evaluation.stress_eval
 ```
 
 Then verify the deployed `/healthz` and `/readyz` endpoints and inspect a representative trace when observability is enabled.
