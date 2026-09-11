@@ -91,7 +91,7 @@ The dashboard is responsive and includes explicit loading, error, and empty stat
 
 ## Gemini configuration
 
-Gemini is the only LLM provider. Generation, structured output, and tool-calling requests pass through the shared `llm_provider.py` gateway.
+Gemini is the only LLM provider. Generation, structured output, and tool-calling requests pass through the shared `services/llm.py` gateway.
 
 ```bash
 GEMINI_API_KEY=your-key
@@ -226,11 +226,12 @@ The normal API runtime keeps optional dense-RAG ML dependencies (`torch` and `se
 
 ```text
 weather_agent_core/   LangGraph agent, planning, verification, MCP execution, security
+mcp_integration/      MCP stdio client and weather capability server
 rag/                  PostgreSQL retrieval, optional dense retrieval, citations, context
+services/             Shared Gemini LLM, embeddings, and observability services
 weather_client.py     Open-Meteo/Nominatim weather integration
-mcp_server.py         MCP weather capability server
-app.py                Flask API + dashboard
 lakebase.py           PostgreSQL/Lakebase persistence abstraction
+app.py                Flask API + dashboard
 evaluation/           Retrieval, RAG, agent, answer, stress, and trace evaluation
 tests/                Automated regression and architecture tests
 docs/                 Architecture, deployment, demo, and production documentation
