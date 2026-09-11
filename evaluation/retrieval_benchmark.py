@@ -14,12 +14,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from evaluation.retrieval_metrics import evaluate_relevant_documents
-from local_rag_store import get_store
+from rag.local_rag_store import get_store
 from rag.retrieval.dense import search as dense_search
 from rag.retrieval.sparse import search as sparse_search
 from rag.retrieval.hybrid import fuse
 
-DATASET = Path(__file__).resolve().parent / "weather_retrieval_dataset.json"
+DATASET = Path(__file__).resolve().parent / "datasets" / "weather_retrieval_dataset.json"
 REPORT = Path(__file__).resolve().parent / "retrieval_benchmark_report.json"
 CANDIDATE_K = 20
 FINAL_K = 10
