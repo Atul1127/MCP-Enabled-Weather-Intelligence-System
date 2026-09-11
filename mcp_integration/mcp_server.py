@@ -19,7 +19,7 @@ except ImportError:
     except ImportError:
         from mcp.server.fastmcp import FastMCP as MCPServer
 
-from observability import emit, span
+from services.observability import emit, span
 
 mcp = MCPServer("indian-weather-intelligence")
 
