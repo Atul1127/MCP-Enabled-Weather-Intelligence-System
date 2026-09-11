@@ -92,12 +92,6 @@ WEATHER_STRESS_LIMIT=100 WEATHER_STRESS_REPORT=/tmp/stress_report_100.json pytho
 
 The stress suite covers current-weather, forecast, alert, activity-risk, and weather-knowledge cases across multiple Indian cities. It reports task success, tool-selection accuracy, argument accuracy for evaluable tool cases, provider quota failures, and latency percentiles.
 
-Agent benchmark:
-
-```bash
-python -m evaluation.agent_benchmark
-```
-
 ## 6. Observability
 
 Trace output is written to the configured `WEATHER_TRACE_PATH`. After an agent run, inspect a trace with:
