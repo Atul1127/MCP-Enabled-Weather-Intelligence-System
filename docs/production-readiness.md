@@ -5,13 +5,7 @@ This document records the verified release shape of the MCP-Enabled Weather Inte
 ## Verified application state
 
 - Automated suite: **122 tests passing locally**.
-- Agent E2E evaluation: **16/16 cases passing** in the verified release run.
-- Tool-selection accuracy: **100%** in the verified agent evaluation.
-- Argument accuracy: **100%** in the verified agent evaluation.
-- Evidence sufficiency: **100%** in the verified agent evaluation.
-- Agent success rate: **100%** in the verified agent evaluation.
-- Unnecessary tool-call rate: **0%** in the verified agent evaluation.
-- Unexpected tool-call rate: **0%** in the verified agent evaluation.
+- Balanced live agent stress suite: **100 generated evaluation cases** covering current weather, forecast, alerts, activity risk, and weather knowledge across multiple Indian cities.
 - Railway deployment: live and verified through health/readiness checks and representative agent/RAG/API flows.
 
 ## Verified Docker state
@@ -39,7 +33,7 @@ The default Docker stack uses PostgreSQL + pgvector for the RAG store. PostgreSQ
 
 ## Evaluation note
 
-Live evaluations consume Gemini quota. The 16-case agent evaluation is the primary repeatable live correctness check; the larger stress suite should be run deliberately when quota and time permit.
+Live evaluations consume Gemini quota. The balanced 100-case stress suite is the primary live agent evaluation and should be run deliberately when quota and time permit.
 
 ## Release checklist
 
@@ -48,7 +42,6 @@ Live evaluations consume Gemini quota. The 16-case agent evaluation is the prima
 3. Run `python -m pytest -q`.
 4. Build and start the Docker Compose service.
 5. Verify `/healthz` and `/readyz`.
-6. Run `python -m evaluation.agent_e2e_eval` with valid Gemini credentials.
-7. Run the stress suite only when additional Gemini quota is available.
-8. Verify the Railway deployment and inspect a representative trace.
-9. Confirm `git status` is clean and no secrets are tracked.
+6. Run the 100-case stress suite with valid Gemini credentials and sufficient quota.
+7. Verify the Railway deployment and inspect a representative trace.
+8. Confirm `git status` is clean and no secrets are tracked.
