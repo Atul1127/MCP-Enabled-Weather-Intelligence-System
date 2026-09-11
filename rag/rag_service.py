@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from llm_provider import generate_text, model_name
+from services.llm import generate_text, model_name
 from rag.pipeline import RAGPipeline, RetrievalResult
 from weather_agent_core.security import validate_location, validate_top_k, validate_user_query
 
