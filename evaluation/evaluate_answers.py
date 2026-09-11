@@ -5,10 +5,10 @@ import asyncio
 import json
 import re
 from pathlib import Path
-from llm_provider import generate_text, model_name
+from services.llm import generate_text, model_name
 from agent import run_agent
 
-DATASET = Path(__file__).with_name("answer_dataset.json")
+DATASET = Path(__file__).resolve().parent / "datasets" / "answer_dataset.json"
 JUDGE_PROMPT = """You are a strict evaluator of a weather AI assistant. Evaluate the candidate answer only against the user question and supplied evidence. Penalize fabricated current weather, unsupported claims, missing requested locations, failure to answer the question, or unsafe advice. Return JSON only with integer scores 1-5 for relevance, groundedness, completeness, and safety, plus a short reason."""
 
 def parse_json(text: str) -> dict:
