@@ -181,8 +181,6 @@ Run the full automated test suite:
 python -m pytest -q
 ```
 
-The current release has **122 tests passing** locally.
-
 Run the **balanced 100-case live stress evaluation** deliberately because it consumes Gemini quota:
 
 ```bash
