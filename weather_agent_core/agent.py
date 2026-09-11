@@ -59,7 +59,41 @@ class WeatherAgent:
         return [types.FunctionDeclaration(name=item.name, description=item.description, parameters=item.schema) for item in selected]
 
     @staticmethod
-    def _ensure_required_tool_calls(calls: list[Any], plan: dict[str, Any], query: str) -> list[Any]:
+    def _infer_tool_args(tool: str, query: str) -> dict[str, Any]:
+        """Build safe fallback arguments for a required capability."""
+        text = " ".join(query.split())
+        lowered = text.lower()
+        location = None
+        marker = " in "
+        if marker in lowered:
+            start = lowered.rfind(marker) + len(marker)
+            location = text[start:].strip()
+            for suffix in (" tomorrow", " today", " tonight"):
+                if location.lower().endswith(suffix):
+                    location = location[: -len(suffix)].strip()
+                    break
+        if tool in {"search_weather", "ask_weather"}:
+            return {"query": query}
+        if tool in {"get_weather", "get_weather_alerts"}:
+            return {"location": location or query}
+        if tool == "get_forecast":
+            args = {"location": location or query}
+            if "tomorrow" in lowered:
+                args["date"] = "tomorrow"
+            elif "today" in lowered:
+                args["date"] = "today"
+            return args
+        if tool == "assess_weather_risk":
+            args = {"location": location or query}
+            if "tomorrow" in lowered:
+                args["date"] = "tomorrow"
+            elif "today" in lowered:
+                args["date"] = "today"
+            return args
+        return {}
+
+    @classmethod
+    def _ensure_required_tool_calls(cls, calls: list[Any], plan: dict[str, Any], query: str) -> list[Any]:
         required_groups = [
             set(step.get("preferred_tools", []))
             for step in plan.get("steps", [])
@@ -69,19 +103,17 @@ class WeatherAgent:
         for group in required_groups:
             if group and not group.intersection(present):
                 preferred = "search_weather" if "search_weather" in group else sorted(group)[0]
-                calls.append(types.FunctionCall(name=preferred, args={"query": query}))
+                calls.append(types.FunctionCall(name=preferred, args=cls._infer_tool_args(preferred, query)))
 
-        # The model can select the correct forecast tools but omit the
-        # temporal argument. For explicit tomorrow comparisons, enforce the
-        # temporal constraint from the user query at the execution boundary.
-        if plan.get("intent") == "comparison":
-            normalized_query = " ".join(query.lower().split())
-            if "forecast" in normalized_query and "tomorrow" in normalized_query:
-                for call in calls:
-                    if str(getattr(call, "name", "")) != "get_forecast":
-                        continue
+        # Enforce explicit temporal constraints whenever the query gives one.
+        normalized_query = " ".join(query.lower().split())
+        if "tomorrow" in normalized_query or "today" in normalized_query:
+            target_date = "tomorrow" if "tomorrow" in normalized_query else "today"
+            for call in calls:
+                name = str(getattr(call, "name", ""))
+                if name in {"get_forecast", "assess_weather_risk"}:
                     args = dict(getattr(call, "args", {}) or {})
-                    args["date"] = "tomorrow"
+                    args["date"] = target_date
                     call.args = args
 
         return calls
@@ -170,10 +202,6 @@ class WeatherAgent:
                 active_declarations = self._declarations(registry, set(route.selected))
                 emit("agent.mcp_route", trace_id=trace_id, requested=list(route.requested), selected=list(route.selected), rejected=list(route.rejected), execution_groups=plan.get("execution_groups", []))
 
-                # Knowledge/RAG plans are deterministic at this boundary: the
-                # planner has already selected the logical MCP capability. Do
-                # not spend a second Gemini call asking the model to select a
-                # tool that the planner has already determined is required.
                 direct_rag = runtime.route == "rag" and len(runtime.required_tool_groups) == 1
                 if direct_rag:
                     selected = route.selected[0]
