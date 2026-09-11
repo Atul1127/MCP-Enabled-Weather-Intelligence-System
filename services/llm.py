@@ -7,7 +7,7 @@ from typing import Any, Sequence
 
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    load_dotenv(override=True)
 except Exception:
     pass
 
