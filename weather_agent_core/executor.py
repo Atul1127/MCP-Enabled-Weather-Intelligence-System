@@ -4,8 +4,8 @@ import asyncio
 import json
 import os
 from typing import Any
-from mcp_client import call_tool
-from observability import span
+from mcp_integration.mcp_client import call_tool
+from services.observability import span
 from .security import validate_observation, validate_tool_arguments, validate_tool_call
 
 MAX_FUNCTION_CALLS = max(1, int(os.environ.get("WEATHER_MAX_TOOL_CALLS", "8")))
