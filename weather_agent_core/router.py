@@ -12,21 +12,31 @@ LIVE_MARKERS = ("today", "tomorrow", "now", "right now", "tonight", "this evenin
 COMPARISON_MARKERS = ("compare", "versus", " vs ", "between ", "which is better")
 ALERT_MARKERS = (
     "weather alert", "weather alerts", "weather hazard", "weather hazards",
-    "dangerous weather", "actionable weather hazard", "actionable weather hazards",
+    "weather risk", "weather risks", "weather warning", "weather warnings",
+    "dangerous weather", "dangerous weather conditions",
+    "actionable weather hazard", "actionable weather hazards",
     "dangerous weather alert", "dangerous weather alerts",
 )
 KNOWLEDGE_MARKERS = (
     "typically", "usually", "what causes", "what does", "why does", "how does",
     "what is", "what are", "associated with", "meaning of", "mean", "means",
-    "does ... mean", "wmo", "weather code", "weather codes", "uncertainty",
-    "future weather claims",
+    "does ... mean", "what precautions", "precautions", "common hazards",
+    "hazards of", "risks from", "what risks", "what conditions can",
+    "can reduce visibility", "affect outdoor activities", "take during",
+    "wmo", "weather code", "weather codes", "uncertainty", "future weather claims",
 )
 STRONG_CONCEPTUAL_MARKERS = (
     "typically", "usually", "what causes", "what does", "why does", "how does",
-    "associated with", "meaning of", "does ... mean", "wmo", "weather code",
-    "weather codes", "uncertainty", "future weather claims",
+    "associated with", "meaning of", "does ... mean", "what precautions",
+    "precautions", "common hazards", "hazards of", "risks from", "what risks",
+    "what conditions can", "can reduce visibility", "affect outdoor activities",
+    "take during", "wmo", "weather code", "weather codes", "uncertainty",
+    "future weather claims",
 )
-RISK_MARKERS = ("safe", "risk", "suitable", "should i", "play", "run", "hike", "travel", "outdoor")
+RISK_MARKERS = (
+    "safe", "risk", "risky", "suitable", "should i", "play", "run",
+    "running", "exercise", "hike", "hiking", "travel", "outdoor",
+)
 CURRENT_MARKERS = (
     "current weather", "current conditions", "weather right now", "weather now",
     "currently", "at the moment", "at present", "right at this moment",
@@ -52,8 +62,6 @@ def classify(query: str) -> str:
     text = query.lower().strip()
     if _any_marker(text, COMPARISON_MARKERS):
         return "comparison"
-    if _any_marker(text, RISK_MARKERS):
-        return "activity_risk"
     if _any_marker(text, ALERT_MARKERS):
         return "alerts"
     # Explicit present-condition phrasing must beat broad conceptual markers
@@ -61,13 +69,16 @@ def classify(query: str) -> str:
     # the moment?" is a live current-weather request, not knowledge retrieval.
     if _any_marker(text, CURRENT_MARKERS):
         return "current_weather"
+    # Explicit conceptual phrasing must beat generic activity/risk words. For
+    # example, "How can heavy rain affect outdoor activities?" is knowledge,
+    # not a live activity-risk assessment.
+    if _any_marker(text, STRONG_CONCEPTUAL_MARKERS):
+        return "knowledge"
+    if _any_marker(text, RISK_MARKERS):
+        return "activity_risk"
     # Strong conceptual markers override live words such as "forecast".
     # Generic "what is/what are" does not: "What is the forecast for Delhi
     # tomorrow?" must remain a live-weather request.
-    if _any_marker(text, STRONG_CONCEPTUAL_MARKERS):
-        return "knowledge"
-    # Current-weather requests are a distinct deterministic capability. This
-    # check must happen before the broader LIVE_MARKERS check.
     if _any_marker(text, LIVE_MARKERS):
         return "live_weather"
     if _any_marker(text, KNOWLEDGE_MARKERS):
