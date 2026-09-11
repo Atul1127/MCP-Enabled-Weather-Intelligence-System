@@ -5,6 +5,10 @@ import os
 import time
 from typing import Any, Sequence
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 _GEMINI_CLIENT: Any | None = None
 
 
