@@ -250,4 +250,4 @@ docker-compose.yml    Local production-style stack
 
 ## License
 
-See the repository license file if present.
+This project is currently provided without an open-source license. All rights are reserved unless otherwise stated by the repository owner.
