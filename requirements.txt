@@ -1,23 +1,10 @@
-databricks-sdk>=0.30.0
-databricks-sql-connector>=3.4.0
-psycopg[binary]>=3.1.0
-sqlalchemy>=2.0.30
-flask>=3.0.3
-requests>=2.32.3
-python-dotenv>=1.0.1
+# Full development/test environment.
+# Production Docker builds use requirements-runtime.txt.
+# Optional dense RAG dependencies live in requirements-rag-ml.txt.
 
-sentence-transformers>=3.0.0
-torch>=2.1.0
+-r requirements-runtime.txt
 
-google-genai>=1.0.0
-
-rank-bm25>=0.2.2
-
-# MCP v2: current stable SDK line.
-mcp[cli]>=2.0.0,<3.0
-
-# LangGraph 1.x uses the current checkpoint serializer policy and avoids the
-# deprecated allowed_objects default used by older 0.x releases.
-langgraph>=1.2.11,<2.0
+# Optional dense retrieval / embedding stack:
+# -r requirements-rag-ml.txt
 
 pytest>=8.0.0
