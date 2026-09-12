@@ -44,13 +44,11 @@ def healthz():
 
 @app.route("/readyz", methods=["GET"])
 def readyz():
-    """Readiness probe that verifies configured dependencies without DDL."""
-    checks = {"gemini_api_key": bool(os.environ.get("GEMINI_API_KEY")), "rag_store": False, "database": False, "weather_schema": False}
+    """Readiness probe for the dependencies required by the request path."""
+    checks = {"gemini_api_key": bool(os.environ.get("GEMINI_API_KEY")), "rag_store": False}
     try:
         rag_service.get_rag_pipeline()
         checks["rag_store"] = True
-        checks["database"] = lakebase.check_connection()
-        checks["weather_schema"] = lakebase.check_weather_schema() if checks["database"] else False
     except Exception:
         logger.exception("RAG readiness check failed")
     ready = all(checks.values())
