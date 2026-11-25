@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 import requests
@@ -28,6 +29,16 @@ logger = logging.getLogger("weather-rag.weather-client")
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 OPEN_METEO_GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
+# The free API limits requests per IP address, and hosts such as Render share
+# outbound IPs between customers. A paid Open-Meteo key uses its own quota.
+OPEN_METEO_CUSTOMER_URL = "https://customer-api.open-meteo.com/v1/forecast"
+# Fallback forecast provider: no key, limits are per application (not per IP),
+# so shared hosting IPs are not a problem. Data is CC BY 4.0 (attribution required).
+MET_NORWAY_URL = "https://api.met.no/weatherapi/locationforecast/2.0/complete"
+MET_NORWAY_ATTRIBUTION = "Weather data from MET Norway (CC BY 4.0)"
+# India has a single, DST-free time zone; this app geocodes within India only.
+_INDIA_TZ = timezone(timedelta(hours=5, minutes=30), "IST")
+FORECAST_CACHE_SECONDS = float(os.environ.get("WEATHER_FORECAST_CACHE_SECONDS", "600"))
 
 # Nominatim's usage policy requires an identifying User-Agent; generic ones get blocked.
 USER_AGENT = os.environ.get(
@@ -41,6 +52,8 @@ LOCATION_DELAY_SECONDS = 1
 _GEOCODE_CACHE: Dict[str, Dict] = {}
 _GEOCODE_CACHE_LOCK = Lock()
 _GEOCODE_CACHE_MAX = 512
+_FORECAST_CACHE: Dict[Tuple[float, float], Tuple[float, Dict]] = {}
+_FORECAST_CACHE_LOCK = Lock()
 
 
 class UpstreamError(RuntimeError):
@@ -203,7 +216,196 @@ def fetch_weather(latitude: float, longitude: float) -> Dict:
         "timezone": "auto",
         "forecast_days": 7,
     }
-    return _get_json(OPEN_METEO_URL, params)
+    # Several tools ask for the same place within one question; reuse a recent
+    # forecast instead of spending the provider's rate limit on duplicates.
+    key = (round(float(latitude), 2), round(float(longitude), 2))
+    now = time.monotonic()
+    with _FORECAST_CACHE_LOCK:
+        cached = _FORECAST_CACHE.get(key)
+    if cached and now - cached[0] < FORECAST_CACHE_SECONDS:
+        return json.loads(json.dumps(cached[1]))
+
+    api_key = os.environ.get("OPEN_METEO_API_KEY", "").strip()
+    try:
+        if api_key:
+            params["apikey"] = api_key
+            data = _get_json(OPEN_METEO_CUSTOMER_URL, params)
+        else:
+            data = _get_json(OPEN_METEO_URL, params)
+    except UpstreamError as primary:
+        # Typically HTTP 429 on hosts whose shared outbound IPs exhausted the
+        # free Open-Meteo quota. MET Norway serves the same shape via an adapter.
+        logger.warning("Open-Meteo failed (%s); falling back to MET Norway", primary)
+        try:
+            data = fetch_weather_met_norway(latitude, longitude)
+        except UpstreamError as fallback:
+            raise UpstreamError(
+                f"{primary.service} + {fallback.service}",
+                fallback.status if fallback.status is not None else primary.status,
+                f"Open-Meteo: {primary}; MET Norway: {fallback}",
+            ) from fallback
+
+    with _FORECAST_CACHE_LOCK:
+        if len(_FORECAST_CACHE) >= 256:
+            _FORECAST_CACHE.pop(next(iter(_FORECAST_CACHE)))
+        _FORECAST_CACHE[key] = (now, data)
+    return json.loads(json.dumps(data))
+
+
+# ---------------------------------------------------------------------------
+# MET Norway fallback (converted to the Open-Meteo response shape)
+# ---------------------------------------------------------------------------
+
+_MET_SYMBOL_TO_WMO = {
+    "clearsky": 0, "fair": 1, "partlycloudy": 2, "cloudy": 3, "fog": 45,
+    "lightrain": 61, "rain": 63, "heavyrain": 65,
+    "lightrainshowers": 80, "rainshowers": 81, "heavyrainshowers": 82,
+    "lightsleet": 66, "sleet": 66, "heavysleet": 67,
+    "lightsleetshowers": 66, "sleetshowers": 66, "heavysleetshowers": 67,
+    "lightsnow": 71, "snow": 73, "heavysnow": 75,
+    "lightsnowshowers": 85, "snowshowers": 85, "heavysnowshowers": 86,
+}
+
+
+def _met_symbol_to_wmo(symbol: Optional[str]) -> Optional[int]:
+    if not symbol:
+        return None
+    base = symbol.split("_")[0]
+    if "thunder" in base:
+        return 95
+    return _MET_SYMBOL_TO_WMO.get(base)
+
+
+def _apparent_temperature(temp_c: Optional[float], humidity: Optional[float], wind_kmh: Optional[float]) -> Optional[float]:
+    """Feels-like temperature: NOAA heat index when hot, wind chill when cold."""
+    if temp_c is None:
+        return None
+    if humidity is not None and temp_c >= 27:
+        t = temp_c * 9 / 5 + 32
+        rh = humidity
+        hi = (-42.379 + 2.04901523 * t + 10.14333127 * rh - 0.22475541 * t * rh - 0.00683783 * t * t
+              - 0.05481717 * rh * rh + 0.00122874 * t * t * rh + 0.00085282 * t * rh * rh
+              - 0.00000199 * t * t * rh * rh)
+        return round((hi - 32) * 5 / 9, 1)
+    if wind_kmh is not None and temp_c <= 10 and wind_kmh > 4.8:
+        v = wind_kmh ** 0.16
+        return round(13.12 + 0.6215 * temp_c - 11.37 * v + 0.3965 * temp_c * v, 1)
+    return round(temp_c, 1)
+
+
+def _kmh(meters_per_second: Optional[float]) -> Optional[float]:
+    return None if meters_per_second is None else round(meters_per_second * 3.6, 1)
+
+
+def _max_or_none(values: List[Optional[float]]):
+    present = [value for value in values if value is not None]
+    return max(present) if present else None
+
+
+def _min_or_none(values: List[Optional[float]]):
+    present = [value for value in values if value is not None]
+    return min(present) if present else None
+
+
+def _convert_met_norway(payload: Dict) -> Dict:
+    timeseries = ((payload or {}).get("properties") or {}).get("timeseries") or []
+    if not timeseries:
+        raise UpstreamError("api.met.no", None, "returned no forecast data")
+
+    def local(stamp: str) -> datetime:
+        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone(_INDIA_TZ)
+
+    hourly = {key: [] for key in ("time", "temperature_2m", "precipitation_probability", "precipitation", "weather_code", "wind_speed_10m")}
+    days: Dict[str, Dict[str, List]] = {}
+
+    for entry in timeseries:
+        moment = local(entry["time"])
+        data = entry.get("data") or {}
+        instant = (data.get("instant") or {}).get("details") or {}
+        one = data.get("next_1_hours") or {}
+        six = data.get("next_6_hours") or {}
+        temp = instant.get("air_temperature")
+        humidity = instant.get("relative_humidity")
+        wind = _kmh(instant.get("wind_speed"))
+        period = one or six
+        details = period.get("details") or {}
+        code = _met_symbol_to_wmo((period.get("summary") or {}).get("symbol_code"))
+        precip = details.get("precipitation_amount")
+        probability = details.get("probability_of_precipitation")
+
+        if one:
+            hourly["time"].append(moment.strftime("%Y-%m-%dT%H:%M"))
+            hourly["temperature_2m"].append(temp)
+            hourly["precipitation_probability"].append(probability)
+            hourly["precipitation"].append(precip)
+            hourly["weather_code"].append(code)
+            hourly["wind_speed_10m"].append(wind)
+
+        day = days.setdefault(moment.strftime("%Y-%m-%d"), {key: [] for key in ("temp", "tmax", "tmin", "apparent", "precip", "prob", "code", "wind")})
+        day["temp"].append(temp)
+        day["tmax"].append(six.get("details", {}).get("air_temperature_max") if not one else None)
+        day["tmin"].append(six.get("details", {}).get("air_temperature_min") if not one else None)
+        day["apparent"].append(_apparent_temperature(temp, humidity, wind))
+        if period:  # one- or six-hour block; blocks do not overlap within the series
+            day["precip"].append(precip)
+        day["prob"].append(probability)
+        day["code"].append(code)
+        day["wind"].append(wind)
+
+    first = timeseries[0]
+    first_data = first.get("data") or {}
+    first_instant = (first_data.get("instant") or {}).get("details") or {}
+    first_period = first_data.get("next_1_hours") or first_data.get("next_6_hours") or {}
+    current_wind = _kmh(first_instant.get("wind_speed"))
+    current = {
+        "time": local(first["time"]).strftime("%Y-%m-%dT%H:%M"),
+        "temperature_2m": first_instant.get("air_temperature"),
+        "relative_humidity_2m": first_instant.get("relative_humidity"),
+        "apparent_temperature": _apparent_temperature(first_instant.get("air_temperature"), first_instant.get("relative_humidity"), current_wind),
+        "precipitation": (first_period.get("details") or {}).get("precipitation_amount"),
+        "weather_code": _met_symbol_to_wmo((first_period.get("summary") or {}).get("symbol_code")),
+        "cloud_cover": first_instant.get("cloud_area_fraction"),
+        "wind_speed_10m": current_wind,
+        "wind_direction_10m": first_instant.get("wind_from_direction"),
+    }
+
+    daily = {key: [] for key in (
+        "time", "weather_code", "temperature_2m_max", "temperature_2m_min", "apparent_temperature_max",
+        "apparent_temperature_min", "sunrise", "sunset", "precipitation_sum", "rain_sum",
+        "precipitation_probability_max", "wind_speed_10m_max",
+    )}
+    for date in sorted(days)[:7]:
+        day = days[date]
+        precip_values = [value for value in day["precip"] if value is not None]
+        total = round(sum(precip_values), 1) if precip_values else None
+        daily["time"].append(date)
+        daily["weather_code"].append(_max_or_none(day["code"]))
+        daily["temperature_2m_max"].append(_max_or_none(day["temp"] + day["tmax"]))
+        daily["temperature_2m_min"].append(_min_or_none(day["temp"] + day["tmin"]))
+        daily["apparent_temperature_max"].append(_max_or_none(day["apparent"]))
+        daily["apparent_temperature_min"].append(_min_or_none(day["apparent"]))
+        daily["sunrise"].append(None)
+        daily["sunset"].append(None)
+        daily["precipitation_sum"].append(total)
+        daily["rain_sum"].append(total)
+        daily["precipitation_probability_max"].append(_max_or_none(day["prob"]))
+        daily["wind_speed_10m_max"].append(_max_or_none(day["wind"]))
+
+    return {
+        "timezone": "Asia/Kolkata",
+        "utc_offset_seconds": 19800,
+        "current": current,
+        "hourly": hourly,
+        "daily": daily,
+        "source": "met.no",
+        "attribution": MET_NORWAY_ATTRIBUTION,
+    }
+
+
+def fetch_weather_met_norway(latitude: float, longitude: float) -> Dict:
+    """Forecast from MET Norway, returned in the Open-Meteo response shape."""
+    params = {"lat": round(float(latitude), 4), "lon": round(float(longitude), 4)}  # max 4 decimals
+    return _convert_met_norway(_get_json(MET_NORWAY_URL, params))
 
 
 # ---------------------------------------------------------------------------
@@ -304,14 +506,17 @@ def detect_alerts(daily: Dict) -> List[Dict]:
     alerts: List[Dict] = []
     dates = daily.get("time") or []
     for index, date in enumerate(dates):
-        probability = _number(_get_index(daily.get("precipitation_probability_max"), index))
+        raw_probability = _get_index(daily.get("precipitation_probability_max"), index)
+        probability_known = raw_probability is not None
+        probability = _number(raw_probability)
         rain = _number(_get_index(daily.get("precipitation_sum"), index))
         wind = _number(_get_index(daily.get("wind_speed_10m_max"), index))
         apparent = _number(_get_index(daily.get("apparent_temperature_max"), index))
         code = int(_number(_get_index(daily.get("weather_code"), index)))
 
-        if probability >= 70 and rain >= 15:
-            alerts.append({"date": date, "severity": "HIGH", "hazard": "Heavy rain", "probability": probability, "details": f"{rain:.1f} mm expected with {probability:g}% precipitation probability.", "recommendation": "Avoid unnecessary outdoor activity and plan for travel disruption."})
+        if rain >= 15 and (probability >= 70 or not probability_known):
+            chance = f" with {probability:g}% precipitation probability" if probability_known else ""
+            alerts.append({"date": date, "severity": "HIGH", "hazard": "Heavy rain", "probability": probability if probability_known else None, "details": f"{rain:.1f} mm expected{chance}.", "recommendation": "Avoid unnecessary outdoor activity and plan for travel disruption."})
         elif probability >= 70:
             alerts.append({"date": date, "severity": "MODERATE", "hazard": "High rain probability", "probability": probability, "details": f"Precipitation probability is {probability:g}%.", "recommendation": "Keep rain protection available and monitor the forecast."})
         if wind >= 40:
