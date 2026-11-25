@@ -20,7 +20,7 @@ services:
     healthCheckPath: /healthz
     # Pre-deploy commands need a paid plan, so the idempotent schema/corpus
     # bootstrap runs before Gunicorn on every start instead.
-    dockerCommand: sh -c "python scripts/init_database.py && exec gunicorn --config docker/gunicorn.conf.py app:app"
+    dockerCommand: sh scripts/render_start.sh
     envVars:
       - key: DATABASE_URL
         fromDatabase:
