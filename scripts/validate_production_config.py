@@ -32,7 +32,7 @@ def main() -> None:
     assert "sentence-transformers>=" in optional_ml
     assert "torch>=" in optional_ml
     assert "GEMINI_API_KEY=" in env_example
-    assert "GEMINI_FALLBACK_MODELS=gemini-3.5-flash-lite" in env_example
+    assert "GEMINI_FALLBACK_MODELS=" in env_example
 
     print("production configuration: OK")
 

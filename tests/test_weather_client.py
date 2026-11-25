@@ -4,17 +4,12 @@ import weather_client
 
 
 def test_geocode_coordinates_directly():
-    result = weather_client.geocode_location(
-        "22.5726,88.3639"
-    )
+    result = weather_client.geocode_location_details("22.5726,88.3639")
 
     assert result is not None
-
-    latitude, longitude, label = result
-
-    assert latitude == pytest.approx(22.5726)
-    assert longitude == pytest.approx(88.3639)
-    assert label == "22.5726,88.3639"
+    assert result["latitude"] == pytest.approx(22.5726)
+    assert result["longitude"] == pytest.approx(88.3639)
+    assert result["display_name"] == "22.5726,88.3639"
 
 
 def test_geocode_location_details_coordinates():

@@ -1,7 +1,6 @@
 """The MCP server must start once per worker and be reused across requests."""
 from __future__ import annotations
 
-import os
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest

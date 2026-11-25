@@ -96,23 +96,6 @@ def get_connection():
         connection.close()
 
 
-def get_engine():
-    from sqlalchemy import create_engine  # heavy import; only needed here
-
-    database_url = get_database_url()
-    if database_url.startswith("postgresql://"):
-        database_url = database_url.replace("postgresql://", "postgresql+psycopg://", 1)
-    elif database_url.startswith("postgres://"):
-        database_url = database_url.replace("postgres://", "postgresql+psycopg://", 1)
-    return create_engine(
-        database_url,
-        connect_args={
-            "connect_timeout": DB_CONNECT_TIMEOUT_SECONDS,
-            "options": f"-c statement_timeout={DB_STATEMENT_TIMEOUT_MS} -c lock_timeout={DB_LOCK_TIMEOUT_MS}",
-        },
-        pool_pre_ping=True,
-    )
-
 
 def run_query(sql: str, params: tuple | dict | None = None) -> list[dict]:
     with get_connection() as connection:

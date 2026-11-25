@@ -48,7 +48,7 @@ _NON_PLACE_WORDS = frozenset({
     "afternoon", "evening", "night", "general", "advance", "case",
 })
 
-DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
+DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 MAX_ROUNDS = max(1, int(os.environ.get("WEATHER_AGENT_MAX_ROUNDS", "4")))
 MAX_RETRIES = max(0, int(os.environ.get("WEATHER_AGENT_MAX_RETRIES", "1")))
 

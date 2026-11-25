@@ -95,8 +95,8 @@ Gemini is the only LLM provider. Generation, structured output, and tool-calling
 
 ```bash
 GEMINI_API_KEY=your-key
-GEMINI_MODEL=gemini-3.6-flash
-GEMINI_FALLBACK_MODELS=gemini-3.5-flash-lite
+GEMINI_MODEL=gemini-3.8-flash
+GEMINI_FALLBACK_MODELS=gemini-3.6-flash,gemini-3.5-flash-lite
 GEMINI_THINKING_LEVEL=low
 GEMINI_MAX_OUTPUT_TOKENS=700
 ```
@@ -104,6 +104,15 @@ GEMINI_MAX_OUTPUT_TOKENS=700
 The provider distinguishes quota exhaustion from transient failures: exhausted model quotas are not repeatedly retried, while transient failures can be retried before moving to a fallback model.
 
 Never commit a real API key. Rotate any credential that has been exposed.
+
+## Weather data sources
+
+| Need | Primary | Automatic fallback |
+|---|---|---|
+| Forecasts | [Open-Meteo](https://open-meteo.com/) | [MET Norway](https://api.met.no/) when Open-Meteo refuses (e.g. HTTP 429 on shared hosting IPs) |
+| Place lookup | OpenStreetMap Nominatim | Open-Meteo geocoding |
+
+Both forecast sources are free and keyless (CC BY 4.0, credited on the dashboard). Forecasts are cached for 10 minutes per location. Set `OPEN_METEO_API_KEY` to use a paid Open-Meteo plan instead. When every provider fails, API errors name the provider and its HTTP status.
 
 ## Quick start
 
@@ -229,15 +238,17 @@ weather_agent_core/   LangGraph agent, planning, verification, MCP execution, se
 mcp_integration/      MCP stdio client and weather capability server
 rag/                  PostgreSQL retrieval, optional dense retrieval, citations, context
 services/             Shared Gemini LLM, embeddings, and observability services
-weather_client.py     Open-Meteo/Nominatim weather integration
+weather_client.py     Forecasts (Open-Meteo, MET Norway fallback) and geocoding (Nominatim, Open-Meteo fallback)
 lakebase.py           PostgreSQL/Lakebase persistence abstraction
 app.py                Flask API + dashboard
 evaluation/           Retrieval, RAG, agent, answer, stress, and trace evaluation
+scripts/              Database bootstrap, Render start script, production config checks
 tests/                Automated regression and architecture tests
 docs/                 Architecture, deployment, demo, and production documentation
 db/                   PostgreSQL + pgvector initialization
 Dockerfile            Production container image
 docker-compose.yml    Local production-style stack
+render.yaml           Render Blueprint (web service + PostgreSQL)
 ```
 
 ## Documentation

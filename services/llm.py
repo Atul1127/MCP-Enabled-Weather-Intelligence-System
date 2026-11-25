@@ -19,12 +19,12 @@ def provider_name() -> str:
 
 
 def model_name() -> str:
-    return os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
+    return os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 
 
 def _gemini_models(primary: str | None = None) -> list[str]:
     primary_name = primary or model_name()
-    configured = os.environ.get("GEMINI_FALLBACK_MODELS", "gemini-3.5-flash-lite")
+    configured = os.environ.get("GEMINI_FALLBACK_MODELS", "gemini-3.6-flash,gemini-3.5-flash-lite")
     return list(dict.fromkeys([primary_name] + [item.strip() for item in configured.split(",") if item.strip()]))
 
 

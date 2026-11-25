@@ -1,8 +1,9 @@
 """
 Indian weather data client.
 
-Uses Open-Meteo for free weather observations and forecasts.
-Locations are resolved through OpenStreetMap Nominatim.
+Forecasts come from Open-Meteo, falling back to MET Norway when Open-Meteo
+refuses (e.g. HTTP 429 on shared hosting IPs). Locations are resolved through
+OpenStreetMap Nominatim, falling back to Open-Meteo's geocoder.
 
 The normalized output is designed for the project's RAG pipeline
 and PostgreSQL/Lakebase weather_documents table.
@@ -183,13 +184,6 @@ def geocode_location_details(location: str) -> Optional[Dict]:
         _GEOCODE_CACHE[key] = dict(result)
     return result
 
-
-def geocode_location(location: str) -> Optional[Tuple[float, float, str]]:
-    """Backward-compatible tuple form of geocode_location_details()."""
-    details = geocode_location_details(location)
-    if not details:
-        return None
-    return details["latitude"], details["longitude"], details["display_name"]
 
 
 # ---------------------------------------------------------------------------
@@ -1027,108 +1021,24 @@ def upsert_documents(
 # Main ingestion pipeline
 # ---------------------------------------------------------------------------
 
-def sync_locations(
-    locations: List[str],
-    limit: int = 50,
-) -> int:
-    """
-    Fetch and store weather data for Indian locations.
-
-    `limit` is retained for backward compatibility with the
-    previous NWS implementation.
-    """
-
-    del limit
-
+def sync_locations(locations: List[str]) -> int:
+    """Fetch and store weather documents for Indian locations; returns rows written."""
     total = 0
-
     for location in locations:
-
         try:
-
-            location_details = (
-                geocode_location_details(
-                    location
-                )
-            )
-
+            location_details = geocode_location_details(location)
             if not location_details:
-
-                print(
-                    f"Could not resolve location: "
-                    f"{location}"
-                )
-
+                logger.warning("Could not resolve location: %s", location)
                 continue
-
-            latitude = location_details[
-                "latitude"
-            ]
-
-            longitude = location_details[
-                "longitude"
-            ]
-
-            label = location_details[
-                "display_name"
-            ]
-
-            print(
-                f"Fetching weather for {label} "
-                f"({latitude}, {longitude})"
-            )
-
-            weather = fetch_weather(
-                latitude,
-                longitude,
-            )
-
-            documents = []
-
-            documents.append(
-                normalize_current_weather(
-                    weather,
-                    label,
-                    location_details,
-                )
-            )
-
-            documents.extend(
-                normalize_daily_forecasts(
-                    weather,
-                    label,
-                    location_details,
-                )
-            )
-
-            count = upsert_documents(
-                documents
-            )
-
+            label = location_details["display_name"]
+            weather = fetch_weather(location_details["latitude"], location_details["longitude"])
+            documents = [normalize_current_weather(weather, label, location_details)]
+            documents.extend(normalize_daily_forecasts(weather, label, location_details))
+            count = upsert_documents(documents)
             total += count
-
-            print(
-                f"Synced {count} documents "
-                f"for {label}"
-            )
-
-        except requests.RequestException as exc:
-
-            print(
-                f"Weather API error for "
-                f"{location}: {exc}"
-            )
-
-        except Exception as exc:
-
-            print(
-                f"Unexpected error for "
-                f"{location}: {exc}"
-            )
-
-        # Respect Nominatim/Open-Meteo usage.
-        time.sleep(
-            LOCATION_DELAY_SECONDS
-        )
-
+            logger.info("Synced %s documents for %s", count, label)
+        except Exception:
+            logger.exception("Weather sync failed for %s", location)
+        # Respect Nominatim/Open-Meteo usage policies between locations.
+        time.sleep(LOCATION_DELAY_SECONDS)
     return total

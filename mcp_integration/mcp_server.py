@@ -165,12 +165,19 @@ def _upstream_failure(exc: "weather_client.UpstreamError") -> dict[str, Any]:
     return {"success": False, "error": f"Weather provider unavailable ({exc.service}, status {exc.status})", "error_type": "upstream_unavailable"}
 
 def _current_time_of_day(current_time: str | None, daily: dict[str, Any]) -> str:
-    if not current_time: return "unknown"
+    """Return "day"/"night" from local ISO timestamps, or "unknown" without sun times."""
+    if not current_time:
+        return "unknown"
     try:
-        current = datetime.fromisoformat(current_time); date = current_time[:10]; dates = daily.get("time") or []
-        i = dates.index(date) if date in dates else 0; sunrise = (daily.get("sunrise") or [None])[i]; sunset = (daily.get("sunset") or [None])[i]
-        if sunrise and sunset: return "day" if sunrise <= current_time <= sunset else "night"
-    except (ValueError, IndexError, TypeError): pass
+        datetime.fromisoformat(current_time)  # reject malformed timestamps
+        dates = daily.get("time") or []
+        index = dates.index(current_time[:10]) if current_time[:10] in dates else 0
+        sunrise = (daily.get("sunrise") or [None])[index]
+        sunset = (daily.get("sunset") or [None])[index]
+        if sunrise and sunset:
+            return "day" if sunrise <= current_time <= sunset else "night"
+    except (ValueError, IndexError, TypeError):
+        pass
     return "unknown"
 
 def _current_summary(current: dict[str, Any], daily: dict[str, Any], timezone: str | None) -> dict[str, Any]:
