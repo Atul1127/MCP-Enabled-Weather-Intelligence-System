@@ -42,3 +42,6 @@ Thumbs.db
 # Coverage
 .coverage
 htmlcov/
+
+observability/
+evaluation/*report*.json

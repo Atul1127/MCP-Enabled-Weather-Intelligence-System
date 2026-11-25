@@ -26,3 +26,4 @@ class GraphState(TypedDict, total=False):
     verification: dict[str, Any]
     retry_reason: str | None
     retry_count: int
+    model_call_count: int

@@ -1,0 +1,52 @@
+# Render Blueprint: Postgres (pgvector) + Dockerized Flask/Gunicorn API.
+# Deploy: Render Dashboard -> New -> Blueprint -> pick this repo.
+databases:
+  - name: weather-rag-db
+    plan: free              # free DBs expire after 30 days; use basic-256mb to keep it
+    region: singapore       # must match the web service so it can use the internal URL
+    postgresMajorVersion: "16"
+    databaseName: weather_rag
+    user: weather_user
+    ipAllowList: []         # no public access; only Render services can connect
+
+services:
+  - type: web
+    name: mcp-weather-intelligence
+    runtime: docker
+    plan: free              # spins down after 15 min idle; starter = always on
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    # Pre-deploy commands need a paid plan, so the idempotent schema/corpus
+    # bootstrap runs before Gunicorn on every start instead.
+    dockerCommand: sh -c "python scripts/init_database.py && exec gunicorn --config docker/gunicorn.conf.py app:app"
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: weather-rag-db
+          property: connectionString
+      - key: GEMINI_API_KEY
+        sync: false         # Render asks for this value when you create the Blueprint
+      # Newest stable Flash first; older Flash and Flash-Lite as fallbacks when a
+      # model's quota is exhausted. Change these in the Render dashboard any time.
+      - key: GEMINI_MODEL
+        value: gemini-3.8-flash
+      - key: GEMINI_FALLBACK_MODELS
+        value: gemini-3.6-flash,gemini-3.5-flash-lite
+      - key: DATABASE_BACKEND
+        value: local
+      - key: WEATHER_RAG_BACKEND
+        value: postgres
+      - key: WEATHER_RAG_DENSE
+        value: "0"
+      - key: WEATHER_ALLOW_SYNC
+        value: "0"
+      # Free instances have 512 MB RAM and each agent request spawns an MCP
+      # subprocess, so keep concurrency low.
+      - key: GUNICORN_WORKERS
+        value: "1"
+      - key: GUNICORN_THREADS
+        value: "2"
+      - key: WEATHER_TRACE_PATH
+        value: /tmp/traces.jsonl

@@ -36,7 +36,7 @@ STRONG_CONCEPTUAL_MARKERS = (
     "protect yourself", "stay safe", "hazards of", "hazard of", "risks of", "risk of",
     "typical risks", "common risks", "effects of", "impact of", "during extreme",
     "during heavy", "during severe", "during thunderstorms", "in extreme heat", "heatwave",
-    "heat wave", "reduce visibility", "visibility", "affect outdoor activities", "weather conditions can",
+    "heat wave", "reduce visibility", "affect outdoor activities", "weather conditions can",
 )
 RISK_MARKERS = (
     "safe", "risk", "risky", "suitable", "should i", "play", "run", "running", "hike", "travel", "outdoor",
@@ -44,6 +44,17 @@ RISK_MARKERS = (
 CURRENT_MARKERS = (
     "current weather", "current conditions", "weather right now", "weather now",
     "currently", "at the moment", "at present", "right at this moment",
+)
+
+
+# A weather quantity asked about a specific place ("What is the weather in
+# Mumbai?", "temperature at Pune") is a live-data question even when it starts
+# with generic knowledge wording such as "what is".
+LOCATED_CONDITION = re.compile(
+    r"(?<!\w)(?:weather|temperature|temp|rain|raining|rainfall|humidity|humid|wind|windy|"
+    r"visibility|conditions?|sunny|cloudy|hot|cold|aqi|air quality)(?!\w)"
+    r".*?(?<!\w)(?:in|at|for|of)\s+\w",
+    re.S,
 )
 
 
@@ -77,6 +88,8 @@ def classify(query: str) -> str:
     if _any_marker(text, RISK_MARKERS):
         return "activity_risk"
     if _any_marker(text, LIVE_MARKERS):
+        return "live_weather"
+    if LOCATED_CONDITION.search(text):
         return "live_weather"
     if _any_marker(text, KNOWLEDGE_MARKERS):
         return "knowledge"

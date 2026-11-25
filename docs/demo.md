@@ -65,15 +65,15 @@ curl -X POST http://localhost:8000/weather/agent \
 
 ## 4. Production deployment
 
-The application is deployed on Railway:
+The application is deployed on Render:
 
-https://mcp-enabled-weather-intelligence-system-production.up.railway.app/
+https://mcp-weather-intelligence.onrender.com/
 
 The same probes are available remotely:
 
 ```bash
-curl https://mcp-enabled-weather-intelligence-system-production.up.railway.app/healthz
-curl https://mcp-enabled-weather-intelligence-system-production.up.railway.app/readyz
+curl https://mcp-weather-intelligence.onrender.com/healthz
+curl https://mcp-weather-intelligence.onrender.com/readyz
 ```
 
 ## 5. Run evaluation

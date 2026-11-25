@@ -58,6 +58,13 @@ class RAGPipeline:
             self._store = get_store()
         return self._store
 
+    def check_ready(self) -> None:
+        """Raise if the configured retrieval store cannot serve requests."""
+        store = self._get_store()
+        check = getattr(store, "check_ready", None)
+        if callable(check):
+            check()
+
     @staticmethod
     def _query_embedding(query: str) -> list[float]:
         vector = _embedding_model().encode([query], normalize_embeddings=True, show_progress_bar=False)[0]
@@ -83,7 +90,13 @@ class RAGPipeline:
         limit = self.top_k if top_k is None else max(1, min(20, int(top_k)))
         plan = analyze(text, location=location, state=state)
         store = self._get_store()
-        allowed = store.filtered_rows(location=location, state=state, source_type=source_type)
+        # None means "no filter"; materializing every row ID would send the whole
+        # table back to the database as an IN (...) list on every request.
+        allowed = (
+            store.filtered_rows(location=location, state=state, source_type=source_type)
+            if (location or state or source_type)
+            else None
+        )
 
         sparse = sparse_search(store, plan.query, self.sparse_k, allowed)
         if self._should_use_dense():

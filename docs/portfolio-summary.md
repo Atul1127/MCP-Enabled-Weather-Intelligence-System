@@ -2,7 +2,7 @@
 
 ## Live deployment
 
-https://mcp-enabled-weather-intelligence-system-production.up.railway.app/
+https://mcp-weather-intelligence.onrender.com/
 
 ## One-line summary
 

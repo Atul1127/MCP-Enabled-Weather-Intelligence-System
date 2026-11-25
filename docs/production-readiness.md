@@ -6,7 +6,7 @@ This document records the verified release shape of the MCP-Enabled Weather Inte
 
 - Automated regression suite is included and should be run before release.
 - Balanced live agent stress suite: **100 generated evaluation cases** covering current weather, forecast, alerts, activity risk, and weather knowledge across multiple Indian cities.
-- Railway deployment: live and verified through health/readiness checks and representative agent/RAG/API flows.
+- Render deployment: live and verified through health/readiness checks and representative agent/RAG/API flows.
 
 ## Verified Docker state
 
@@ -43,5 +43,5 @@ Live evaluations consume Gemini quota. The balanced 100-case stress suite is the
 4. Build and start the Docker Compose service.
 5. Verify `/healthz` and `/readyz`.
 6. Run the 100-case stress suite with valid Gemini credentials and sufficient quota.
-7. Verify the Railway deployment and inspect a representative trace.
+7. Verify the Render deployment and inspect a representative trace.
 8. Confirm `git status` is clean and no secrets are tracked.

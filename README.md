@@ -4,10 +4,10 @@ An **MCP-first weather intelligence platform for Indian locations** combining li
 
 ## 🚀 Live Demo
 
-**Production dashboard:** https://mcp-enabled-weather-intelligence-system-production.up.railway.app/
+**Production dashboard:** https://mcp-weather-intelligence.onrender.com/
 
-**Health:** https://mcp-enabled-weather-intelligence-system-production.up.railway.app/healthz  
-**Readiness:** https://mcp-enabled-weather-intelligence-system-production.up.railway.app/readyz
+**Health:** https://mcp-weather-intelligence.onrender.com/healthz  
+**Readiness:** https://mcp-weather-intelligence.onrender.com/readyz
 
 The deployed service exposes the same dashboard and API used by the local Docker setup.
 

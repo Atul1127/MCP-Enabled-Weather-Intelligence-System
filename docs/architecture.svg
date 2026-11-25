@@ -6,7 +6,7 @@ text{font-family:Arial,sans-serif;fill:#e5e7eb}.title{font-size:30px;font-weight
 <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 Z" fill="#94a3b8"/></marker></defs>
 <text x="600" y="45" text-anchor="middle" class="title">MCP-Enabled Weather Intelligence System</text>
 <rect x="440" y="70" width="320" height="65" rx="12" class="accent"/>
-<text x="600" y="97" text-anchor="middle" class="h">User / Dashboard / HTTP API</text><text x="600" y="119" text-anchor="middle" class="t">Railway or local Docker deployment</text>
+<text x="600" y="97" text-anchor="middle" class="h">User / Dashboard / HTTP API</text><text x="600" y="119" text-anchor="middle" class="t">Render or local Docker deployment</text>
 <path d="M600 135 V175" class="line"/>
 <rect x="420" y="175" width="360" height="65" rx="12" class="purple"/>
 <text x="600" y="202" text-anchor="middle" class="h">LangGraph WeatherAgent</text><text x="600" y="224" text-anchor="middle" class="t">Router → Planner → Decomposer</text>

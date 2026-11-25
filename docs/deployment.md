@@ -2,9 +2,9 @@
 
 ## Production deployment
 
-The application is deployed on Railway:
+The application is deployed on Render:
 
-**https://mcp-enabled-weather-intelligence-system-production.up.railway.app/**
+**https://mcp-weather-intelligence.onrender.com/**
 
 Useful probes:
 
@@ -13,6 +13,12 @@ Useful probes:
 - `GET /` — dashboard
 
 Keep platform secrets and database credentials in the platform's environment configuration. Never commit them to the repository.
+
+### Render
+
+`render.yaml` defines the whole stack as a Render Blueprint: a PostgreSQL 16 database (pgvector is enabled by `scripts/init_database.py`) and the Docker web service. In the Render Dashboard choose **New → Blueprint**, select this repository, and enter `GEMINI_API_KEY` when prompted. The service runs the idempotent schema/corpus bootstrap before Gunicorn starts and binds to Render's `$PORT`.
+
+On the free instance type the web service sleeps after 15 minutes without traffic and the free database expires after 30 days; switch `plan` in `render.yaml` to keep a permanent demo.
 
 ## Local Docker deployment
 

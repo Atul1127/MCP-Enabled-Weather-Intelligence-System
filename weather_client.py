@@ -329,6 +329,57 @@ def weather_severity(
 
 
 # ---------------------------------------------------------------------------
+# Forecast hazard detection (shared by the HTTP API and the MCP server)
+# ---------------------------------------------------------------------------
+
+def _number(value, default: float = 0.0) -> float:
+    """Open-Meteo returns null for missing values; treat them as 'no signal'."""
+    if value is None or isinstance(value, bool):
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def detect_alerts(daily: Dict) -> List[Dict]:
+    """Deterministic application-level hazards from a daily Open-Meteo forecast.
+
+    This is NOT an official IMD warning classification.
+    """
+    alerts: List[Dict] = []
+    dates = daily.get("time") or []
+    for index, date in enumerate(dates):
+        probability = _number(_get_index(daily.get("precipitation_probability_max"), index))
+        rain = _number(_get_index(daily.get("precipitation_sum"), index))
+        wind = _number(_get_index(daily.get("wind_speed_10m_max"), index))
+        apparent = _number(_get_index(daily.get("apparent_temperature_max"), index))
+        code = int(_number(_get_index(daily.get("weather_code"), index)))
+
+        if probability >= 70 and rain >= 15:
+            alerts.append({"date": date, "severity": "HIGH", "hazard": "Heavy rain", "probability": probability, "details": f"{rain:.1f} mm expected with {probability:g}% precipitation probability.", "recommendation": "Avoid unnecessary outdoor activity and plan for travel disruption."})
+        elif probability >= 70:
+            alerts.append({"date": date, "severity": "MODERATE", "hazard": "High rain probability", "probability": probability, "details": f"Precipitation probability is {probability:g}%.", "recommendation": "Keep rain protection available and monitor the forecast."})
+        if wind >= 40:
+            alerts.append({"date": date, "severity": "HIGH", "hazard": "Strong wind", "details": f"Maximum forecast wind is {wind:.1f} km/h.", "recommendation": "Avoid exposed outdoor activities and secure loose objects."})
+        if apparent >= 40:
+            alerts.append({"date": date, "severity": "HIGH", "hazard": "Extreme heat", "details": f"Maximum apparent temperature is {apparent:.1f}°C.", "recommendation": "Limit strenuous outdoor activity, hydrate, and seek shade."})
+        elif apparent >= 35:
+            alerts.append({"date": date, "severity": "MODERATE", "hazard": "High heat", "details": f"Maximum apparent temperature is {apparent:.1f}°C.", "recommendation": "Take heat precautions during strenuous outdoor activity."})
+        if code >= 95:
+            alerts.append({"date": date, "severity": "HIGH", "hazard": "Thunderstorm", "details": f"Thunderstorm weather code {code} is forecast.", "recommendation": "Avoid exposed outdoor locations and seek sturdy shelter."})
+
+    alerts.sort(key=lambda alert: (0 if alert["severity"] == "HIGH" else 1, str(alert["date"])))
+    return alerts
+
+
+def highest_severity(alerts: List[Dict]) -> str:
+    if any(alert["severity"] == "HIGH" for alert in alerts):
+        return "HIGH"
+    return "MODERATE" if alerts else "NONE"
+
+
+# ---------------------------------------------------------------------------
 # Stable document IDs
 # ---------------------------------------------------------------------------
 

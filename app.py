@@ -47,7 +47,9 @@ def readyz():
     """Readiness probe for the dependencies required by the request path."""
     checks = {"gemini_api_key": bool(os.environ.get("GEMINI_API_KEY")), "rag_store": False}
     try:
-        rag_service.get_rag_pipeline()
+        # Actually touch the store (database/schema or local corpus); merely
+        # returning the import-time pipeline object proves nothing.
+        rag_service.get_rag_pipeline().check_ready()
         checks["rag_store"] = True
     except Exception:
         logger.exception("RAG readiness check failed")
@@ -85,28 +87,8 @@ def weather_alerts():
         if not details:
             return jsonify({"error": "Location could not be resolved"}), 404
         weather = weather_client.fetch_weather(details["latitude"], details["longitude"])
-        daily = weather.get("daily", {})
-        alerts = []
-        dates = daily.get("time", [])
-        for index, date in enumerate(dates):
-            probability = (daily.get("precipitation_probability_max") or [0] * len(dates))[index]
-            rain = (daily.get("precipitation_sum") or [0] * len(dates))[index]
-            wind = (daily.get("wind_speed_10m_max") or [0] * len(dates))[index]
-            apparent = (daily.get("apparent_temperature_max") or [0] * len(dates))[index]
-            code = (daily.get("weather_code") or [0] * len(dates))[index]
-            if probability >= 70 and rain >= 15:
-                alerts.append({"date": date, "severity": "HIGH", "hazard": "Heavy rain", "details": f"{rain:.1f} mm expected with {probability}% probability.", "recommendation": "Avoid unnecessary outdoor activity and plan for travel disruption."})
-            elif probability >= 70:
-                alerts.append({"date": date, "severity": "MODERATE", "hazard": "High rain probability", "details": f"Precipitation probability is {probability}%.", "recommendation": "Keep rain protection available and monitor the forecast."})
-            if wind >= 40:
-                alerts.append({"date": date, "severity": "HIGH", "hazard": "Strong wind", "details": f"Maximum forecast wind is {wind:.1f} km/h.", "recommendation": "Avoid exposed outdoor activities and secure loose objects."})
-            if apparent >= 40:
-                alerts.append({"date": date, "severity": "HIGH", "hazard": "Extreme heat", "details": f"Maximum apparent temperature is {apparent:.1f}°C.", "recommendation": "Limit strenuous outdoor activity, hydrate, and seek shade."})
-            elif apparent >= 35:
-                alerts.append({"date": date, "severity": "MODERATE", "hazard": "High heat", "details": f"Maximum apparent temperature is {apparent:.1f}°C.", "recommendation": "Take heat precautions during strenuous outdoor activity."})
-            if code >= 95:
-                alerts.append({"date": date, "severity": "HIGH", "hazard": "Thunderstorm", "details": f"Thunderstorm weather code {code} is forecast.", "recommendation": "Avoid exposed outdoor locations and seek sturdy shelter."})
-        return jsonify({"success": True, "location": details, "alerts": alerts, "alert_count": len(alerts), "highest_severity": "HIGH" if any(a["severity"] == "HIGH" for a in alerts) else ("MODERATE" if alerts else "NONE")})
+        alerts = weather_client.detect_alerts(weather.get("daily", {}))
+        return jsonify({"success": True, "location": details, "alerts": alerts, "alert_count": len(alerts), "highest_severity": weather_client.highest_severity(alerts)})
     except Exception:
         logger.exception("Weather alert request failed")
         return jsonify({"error": "Failed to generate alerts"}), 502

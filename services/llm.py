@@ -79,7 +79,9 @@ def _config_for_model(model: str, *, temperature: float | None = 0.0, **extra: A
         "thinking_config": types.ThinkingConfig(thinking_level=_gemini_thinking_level()),
         **extra,
     }
-    if temperature is not None and not model.startswith(("gemini-3.5", "gemini-3.6", "gemini-3.7")):
+    # Gemini 3+/4 models are tuned for their default temperature; forcing 0.0 can
+    # cause looping or degraded reasoning, so only older models get an override.
+    if temperature is not None and not model.startswith(("gemini-3", "gemini-4")):
         kwargs["temperature"] = temperature
     return types.GenerateContentConfig(**kwargs)
 
