@@ -57,3 +57,39 @@ def test_quota_failure_skips_same_model_retry(monkeypatch: pytest.MonkeyPatch):
         )
 
     assert FakeClient.models.calls == 1
+
+
+def test_gemini_client_has_request_timeout(monkeypatch):
+    import services.llm as llm
+    captured = {}
+
+    class FakeClient:
+        def __init__(self, api_key, http_options=None):
+            captured["timeout"] = http_options.timeout
+
+    import google.genai as genai
+    monkeypatch.setattr(genai, "Client", FakeClient)
+    monkeypatch.setattr(llm, "_GEMINI_CLIENT", None)
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setenv("GEMINI_TIMEOUT_SECONDS", "25")
+    llm._gemini_client()
+    assert captured["timeout"] == 25000
+
+
+def test_timed_out_model_falls_back_without_retrying(monkeypatch):
+    import services.llm as llm
+    attempts = []
+
+    class Models:
+        def generate_content(self, model, contents, config):
+            attempts.append(model)
+            if model == "slow-model":
+                raise TimeoutError("The read operation timed out")
+            return "response"
+
+    monkeypatch.setattr(llm, "_gemini_client", lambda: type("C", (), {"models": Models()})())
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    monkeypatch.setenv("GEMINI_FALLBACK_MODELS", "fast-model")
+    response, model = llm._generate_with_fallback(contents="hi", config_factory=lambda m: None, primary_model="slow-model")
+    assert (response, model) == ("response", "fast-model")
+    assert attempts == ["slow-model", "fast-model"]  # no second wait on the slow model

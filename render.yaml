@@ -34,6 +34,12 @@ services:
         value: gemini-3.8-flash
       - key: GEMINI_FALLBACK_MODELS
         value: gemini-3.6-flash,gemini-3.5-flash-lite
+      # Short weather answers do not need deep reasoning; minimal thinking cuts
+      # Gemini latency substantially on a 0.1-CPU instance.
+      - key: GEMINI_THINKING_LEVEL
+        value: minimal
+      - key: GEMINI_TIMEOUT_SECONDS
+        value: "25"
       # Optional paid Open-Meteo key: Render's shared outbound IPs exhaust the
       # free per-IP limit (HTTP 429). Leave empty to use the free API.
       - key: OPEN_METEO_API_KEY

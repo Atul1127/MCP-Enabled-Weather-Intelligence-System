@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import contextvars
 import json
+import logging
 import os
 import time
 import uuid
@@ -10,6 +11,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+_logger = logging.getLogger("weather-rag.trace")
 LOG_PATH = Path(os.environ.get("WEATHER_TRACE_PATH", "observability/traces.jsonl"))
 _CURRENT_SPAN: contextvars.ContextVar[str | None] = contextvars.ContextVar("weather_current_span", default=None)
 _CURRENT_TRACE: contextvars.ContextVar[str | None] = contextvars.ContextVar("weather_current_trace", default=None)
@@ -50,6 +52,8 @@ def span(name: str, *, trace_id: str, **fields: Any) -> Iterator[dict[str, Any]]
         raise
     finally:
         result["latency_ms"] = round((time.perf_counter() - started) * 1000, 2)
+        # Also log timings to stdout so hosted logs (e.g. Render) show where time goes.
+        _logger.info("trace=%s %s took %.0fms%s", trace_id, name, result["latency_ms"], "" if result.get("ok", True) else " (failed)")
         emit("span.end", trace_id=trace_id, span=name, span_id=span_id, parent_span_id=parent_span_id, **result)
         _CURRENT_SPAN.reset(span_token)
         _CURRENT_TRACE.reset(trace_token)

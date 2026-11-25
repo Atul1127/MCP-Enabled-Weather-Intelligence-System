@@ -1,6 +1,7 @@
 """Single Gemini gateway for text, tool-calling, and structured generation."""
 from __future__ import annotations
 
+import logging
 import os
 import time
 from typing import Any, Sequence
@@ -12,6 +13,15 @@ except Exception:
     pass
 
 _GEMINI_CLIENT: Any | None = None
+logger = logging.getLogger("weather-rag.llm")
+
+
+def _gemini_timeout_ms() -> int:
+    """Per-request timeout; the SDK default is no timeout at all."""
+    seconds = float(os.environ.get("GEMINI_TIMEOUT_SECONDS", "25"))
+    if seconds <= 0:
+        raise ValueError("GEMINI_TIMEOUT_SECONDS must be positive")
+    return int(seconds * 1000)
 
 
 def model_name() -> str:
@@ -31,12 +41,17 @@ def _gemini_client() -> Any:
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
             raise RuntimeError("GEMINI_API_KEY is not set in the process environment")
-        _GEMINI_CLIENT = genai.Client(api_key=api_key)
+        from google.genai import types
+        # Without a timeout one slow response can consume the whole request
+        # budget before the fallback model is ever tried.
+        _GEMINI_CLIENT = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=_gemini_timeout_ms()))
     return _GEMINI_CLIENT
 
 
 def _gemini_error_kind(exc: Exception) -> str:
     text = str(exc).upper()
+    if isinstance(exc, TimeoutError) or "TIMEOUT" in type(exc).__name__.upper() or "TIMED OUT" in text:
+        return "timeout"
     status = getattr(exc, "status_code", None)
     if status is None:
         status = getattr(exc, "code", None)
@@ -89,12 +104,20 @@ def _generate_with_fallback(*, contents: Any, config_factory: Any, primary_model
     quota_models: list[str] = []
     for model in models:
         for attempt in range(2):
+            started = time.perf_counter()
             try:
                 response = client.models.generate_content(model=model, contents=contents, config=config_factory(model))
+                logger.info("Gemini %s answered in %.1fs (attempt %d)", model, time.perf_counter() - started, attempt + 1)
                 os.environ["GEMINI_LAST_MODEL"] = model
                 return response, model
             except Exception as exc:
                 kind = _gemini_error_kind(exc)
+                logger.warning("Gemini %s failed after %.1fs (%s): %s", model, time.perf_counter() - started, kind, str(exc)[:200])
+                if kind == "timeout":
+                    # Waiting the full timeout again on the same model rarely helps;
+                    # move straight to the next configured model.
+                    errors.append(f"{model}: timed out")
+                    break
                 if kind == "quota":
                     quota_models.append(model)
                     errors.append(f"{model}: quota/resource exhausted")
