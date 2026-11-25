@@ -148,6 +148,14 @@ curl http://localhost:8000/readyz
 
 The default Docker stack uses **PostgreSQL + pgvector** for persistence and RAG. Sparse/full-text retrieval is the normal path; dense retrieval is opt-in with `WEATHER_RAG_DENSE=1` and the optional ML dependencies.
 
+To enable dense retrieval, install the ML extras, build the embeddings once, then turn it on:
+
+```bash
+python -m pip install -r requirements-rag-ml.txt
+python -m services.embedding_service      # embeds weather_documents into weather_embeddings
+WEATHER_RAG_DENSE=1 python app.py
+```
+
 ## API
 
 | Endpoint | Method | Purpose |
@@ -237,7 +245,7 @@ The normal API runtime keeps optional dense-RAG ML dependencies (`torch` and `se
 weather_agent_core/   LangGraph agent, planning, verification, MCP execution, security
 mcp_integration/      MCP stdio client and weather capability server
 rag/                  PostgreSQL retrieval, optional dense retrieval, citations, context
-services/             Shared Gemini LLM, embeddings, and observability services
+services/             Shared Gemini LLM, embedding indexer (optional dense RAG), and observability
 weather_client.py     Forecasts (Open-Meteo, MET Norway fallback) and geocoding (Nominatim, Open-Meteo fallback)
 lakebase.py           PostgreSQL/Lakebase persistence abstraction
 app.py                Flask API + dashboard
