@@ -18,238 +18,192 @@ from typing import Dict, List, Optional, Tuple
 import requests
 
 
+import logging
+import os
+from threading import Lock
+from urllib.parse import urlsplit
+
+logger = logging.getLogger("weather-rag.weather-client")
+
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+OPEN_METEO_GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 
-USER_AGENT = "weather-rag-india/1.0"
+# Nominatim's usage policy requires an identifying User-Agent; generic ones get blocked.
+USER_AGENT = os.environ.get(
+    "WEATHER_HTTP_USER_AGENT",
+    "mcp-weather-intelligence/1.0 (+https://github.com/Atul1127/MCP-Enabled-Weather-Intelligence-System)",
+)
 
-REQUEST_TIMEOUT = 20
+REQUEST_TIMEOUT = float(os.environ.get("WEATHER_HTTP_TIMEOUT", "10"))
 LOCATION_DELAY_SECONDS = 1
+
+_GEOCODE_CACHE: Dict[str, Dict] = {}
+_GEOCODE_CACHE_LOCK = Lock()
+_GEOCODE_CACHE_MAX = 512
+
+
+class UpstreamError(RuntimeError):
+    """An external weather/geocoding provider failed or refused the request."""
+
+    def __init__(self, service: str, status: Optional[int], message: str):
+        super().__init__(f"{service}: {message}")
+        self.service = service
+        self.status = status
+
+
+def _get_json(url: str, params: Dict, *, send_user_agent: bool = True):
+    service = urlsplit(url).hostname or url
+    headers = {"User-Agent": USER_AGENT} if send_user_agent else {}
+    try:
+        response = requests.get(url, params=params, headers=headers, timeout=REQUEST_TIMEOUT)
+    except requests.Timeout as exc:
+        raise UpstreamError(service, None, f"timed out after {REQUEST_TIMEOUT:g}s") from exc
+    except requests.RequestException as exc:
+        raise UpstreamError(service, None, f"connection failed ({type(exc).__name__})") from exc
+    if response.status_code >= 400:
+        raise UpstreamError(service, response.status_code, f"HTTP {response.status_code}")
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise UpstreamError(service, response.status_code, "returned invalid JSON") from exc
 
 
 # ---------------------------------------------------------------------------
 # Location resolution
 # ---------------------------------------------------------------------------
 
-def geocode_location(
-    location: str,
-) -> Optional[Tuple[float, float, str]]:
-    """
-    Resolve an Indian city/district to latitude, longitude and display name.
+def _parse_coordinates(location: str) -> Optional[Dict]:
+    """Accept direct coordinates such as "22.5726,88.3639"."""
+    parts = [part.strip() for part in location.split(",")]
+    if len(parts) != 2:
+        return None
+    try:
+        latitude, longitude = float(parts[0]), float(parts[1])
+    except ValueError:
+        return None
+    if -90 <= latitude <= 90 and -180 <= longitude <= 180:
+        return {"latitude": latitude, "longitude": longitude, "display_name": location, "state": None, "district": None}
+    return None
 
-    Also accepts direct coordinates in the form:
 
-        "22.5726,88.3639"
-    """
-
-    location = location.strip()
-
-    # Direct latitude/longitude input
-    if "," in location:
-        parts = [part.strip() for part in location.split(",")]
-
-        if len(parts) == 2:
-            try:
-                lat = float(parts[0])
-                lon = float(parts[1])
-
-                if -90 <= lat <= 90 and -180 <= lon <= 180:
-                    return lat, lon, f"{lat},{lon}"
-
-            except ValueError:
-                pass
-
-    params = {
+def _geocode_nominatim(location: str) -> Optional[Dict]:
+    results = _get_json(NOMINATIM_URL, {
         "q": f"{location}, India",
         "format": "json",
         "limit": 1,
         "countrycodes": "in",
         "addressdetails": 1,
-    }
-
-    headers = {
-        "User-Agent": USER_AGENT,
-    }
-
-    response = requests.get(
-        NOMINATIM_URL,
-        params=params,
-        headers=headers,
-        timeout=REQUEST_TIMEOUT,
-    )
-
-    response.raise_for_status()
-
-    results = response.json()
-
+    })
     if not results:
         return None
-
     result = results[0]
-
-    return (
-        float(result["lat"]),
-        float(result["lon"]),
-        result.get("display_name", location),
-    )
-
-
-def geocode_location_details(
-    location: str,
-) -> Optional[Dict]:
-    """
-    Resolve an Indian location and return structured geographic
-    and administrative metadata.
-
-    Returns:
-
-        {
-            "latitude": float,
-            "longitude": float,
-            "display_name": str,
-            "state": str | None,
-            "district": str | None,
-        }
-    """
-
-    location = location.strip()
-
-    # Direct coordinates
-    if "," in location:
-        parts = [part.strip() for part in location.split(",")]
-
-        if len(parts) == 2:
-            try:
-                latitude = float(parts[0])
-                longitude = float(parts[1])
-
-                if (
-                    -90 <= latitude <= 90
-                    and -180 <= longitude <= 180
-                ):
-                    return {
-                        "latitude": latitude,
-                        "longitude": longitude,
-                        "display_name": location,
-                        "state": None,
-                        "district": None,
-                    }
-
-            except ValueError:
-                pass
-
-    params = {
-        "q": f"{location}, India",
-        "format": "json",
-        "limit": 1,
-        "countrycodes": "in",
-        "addressdetails": 1,
-    }
-
-    headers = {
-        "User-Agent": USER_AGENT,
-    }
-
-    response = requests.get(
-        NOMINATIM_URL,
-        params=params,
-        headers=headers,
-        timeout=REQUEST_TIMEOUT,
-    )
-
-    response.raise_for_status()
-
-    results = response.json()
-
-    if not results:
-        return None
-
-    result = results[0]
-
     address = result.get("address", {})
-
     return {
         "latitude": float(result["lat"]),
         "longitude": float(result["lon"]),
-        "display_name": result.get(
-            "display_name",
-            location,
-        ),
+        "display_name": result.get("display_name", location),
         "state": address.get("state"),
-        "district": (
-            address.get("state_district")
-            or address.get("district")
-            or address.get("county")
-        ),
+        "district": address.get("state_district") or address.get("district") or address.get("county"),
     }
+
+
+def _geocode_open_meteo(location: str) -> Optional[Dict]:
+    # Open-Meteo matches a single place name, not "City, State" strings.
+    name = location.split(",")[0].strip()
+    data = _get_json(OPEN_METEO_GEOCODING_URL, {
+        "name": name, "count": 1, "language": "en", "format": "json", "countryCode": "IN",
+    })
+    results = (data or {}).get("results") or []
+    if not results:
+        return None
+    result = results[0]
+    display = ", ".join(part for part in (result.get("name"), result.get("admin1"), result.get("country")) if part)
+    return {
+        "latitude": float(result["latitude"]),
+        "longitude": float(result["longitude"]),
+        "display_name": display or location,
+        "state": result.get("admin1"),
+        "district": result.get("admin2"),
+    }
+
+
+def geocode_location_details(location: str) -> Optional[Dict]:
+    """Resolve an Indian location to coordinates and administrative metadata.
+
+    Tries OpenStreetMap Nominatim first and falls back to Open-Meteo's geocoder,
+    because Nominatim often blocks or rate-limits shared cloud IP addresses.
+    Returns None when neither provider knows the place; raises UpstreamError
+    when every provider failed.
+    """
+    location = location.strip()
+    coordinates = _parse_coordinates(location)
+    if coordinates:
+        return coordinates
+
+    key = location.lower()
+    with _GEOCODE_CACHE_LOCK:
+        cached = _GEOCODE_CACHE.get(key)
+    if cached is not None:
+        return dict(cached)
+
+    errors: List[UpstreamError] = []
+    result: Optional[Dict] = None
+    for provider in (_geocode_nominatim, _geocode_open_meteo):
+        try:
+            result = provider(location)
+        except UpstreamError as exc:
+            logger.warning("Geocoding via %s failed: %s", exc.service, exc)
+            errors.append(exc)
+            continue
+        if result:
+            break
+
+    if result is None:
+        if errors and len(errors) == 2:
+            raise errors[-1]
+        return None
+
+    with _GEOCODE_CACHE_LOCK:
+        if len(_GEOCODE_CACHE) >= _GEOCODE_CACHE_MAX:
+            _GEOCODE_CACHE.pop(next(iter(_GEOCODE_CACHE)))
+        _GEOCODE_CACHE[key] = dict(result)
+    return result
+
+
+def geocode_location(location: str) -> Optional[Tuple[float, float, str]]:
+    """Backward-compatible tuple form of geocode_location_details()."""
+    details = geocode_location_details(location)
+    if not details:
+        return None
+    return details["latitude"], details["longitude"], details["display_name"]
 
 
 # ---------------------------------------------------------------------------
 # Open-Meteo
 # ---------------------------------------------------------------------------
 
-def fetch_weather(
-    latitude: float,
-    longitude: float,
-) -> Dict:
-    """
-    Fetch current weather and a 7-day forecast.
-
-    Open-Meteo does not require an API key.
-    """
-
+def fetch_weather(latitude: float, longitude: float) -> Dict:
+    """Fetch current weather, hourly data and a 7-day forecast (no API key needed)."""
     params = {
         "latitude": latitude,
         "longitude": longitude,
-        "current": ",".join(
-            [
-                "temperature_2m",
-                "relative_humidity_2m",
-                "apparent_temperature",
-                "precipitation",
-                "weather_code",
-                "cloud_cover",
-                "wind_speed_10m",
-                "wind_direction_10m",
-            ]
-        ),
-        "hourly": ",".join(
-            [
-                "temperature_2m",
-                "precipitation_probability",
-                "precipitation",
-                "weather_code",
-                "wind_speed_10m",
-            ]
-        ),
-        "daily": ",".join(
-            [
-                "weather_code",
-                "temperature_2m_max",
-                "temperature_2m_min",
-                "apparent_temperature_max",
-                "apparent_temperature_min",
-                "sunrise",
-                "sunset",
-                "precipitation_sum",
-                "rain_sum",
-                "precipitation_probability_max",
-                "wind_speed_10m_max",
-            ]
-        ),
+        "current": ",".join([
+            "temperature_2m", "relative_humidity_2m", "apparent_temperature", "precipitation",
+            "weather_code", "cloud_cover", "wind_speed_10m", "wind_direction_10m",
+        ]),
+        "hourly": ",".join([
+            "temperature_2m", "precipitation_probability", "precipitation", "weather_code", "wind_speed_10m",
+        ]),
+        "daily": ",".join([
+            "weather_code", "temperature_2m_max", "temperature_2m_min", "apparent_temperature_max",
+            "apparent_temperature_min", "sunrise", "sunset", "precipitation_sum", "rain_sum",
+            "precipitation_probability_max", "wind_speed_10m_max",
+        ]),
         "timezone": "auto",
         "forecast_days": 7,
     }
-
-    response = requests.get(
-        OPEN_METEO_URL,
-        params=params,
-        timeout=REQUEST_TIMEOUT,
-    )
-
-    response.raise_for_status()
-
-    return response.json()
+    return _get_json(OPEN_METEO_URL, params)
 
 
 # ---------------------------------------------------------------------------

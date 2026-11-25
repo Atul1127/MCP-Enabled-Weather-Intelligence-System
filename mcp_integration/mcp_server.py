@@ -159,6 +159,11 @@ def _daily_summary(weather: dict[str, Any], target: str) -> dict[str, Any]:
     code = value("weather_code")
     return {"date": target, "condition": weather_client.weather_description(code), "weather_code": code, "severity": weather_client.weather_severity(code), "temperature_min_c": value("temperature_2m_min"), "temperature_max_c": value("temperature_2m_max"), "apparent_temperature_max_c": value("apparent_temperature_max"), "precipitation_mm": value("precipitation_sum"), "rain_mm": value("rain_sum"), "precipitation_probability_pct": value("precipitation_probability_max"), "max_wind_kmh": value("wind_speed_10m_max"), "sunrise": value("sunrise"), "sunset": value("sunset")}
 
+def _upstream_failure(exc: "weather_client.UpstreamError") -> dict[str, Any]:
+    # A provider outage is not fixable by retrying with other arguments; mark it
+    # so the agent stops re-planning and reports the outage instead.
+    return {"success": False, "error": f"Weather provider unavailable ({exc.service}, status {exc.status})", "error_type": "upstream_unavailable"}
+
 def _current_time_of_day(current_time: str | None, daily: dict[str, Any]) -> str:
     if not current_time: return "unknown"
     try:
@@ -177,9 +182,13 @@ def get_weather(location: str) -> dict[str, Any]:
     """Get current weather and a 7-day forecast."""
     location = location.strip() if location else ""
     if not location: raise ValueError("location cannot be empty")
-    details = weather_client.geocode_location_details(location)
-    if not details: return {"success": False, "error": f"Could not resolve location: {location}"}
-    weather = weather_client.fetch_weather(details["latitude"], details["longitude"]); current = weather.get("current", {}); daily = weather.get("daily", {})
+    try:
+        details = weather_client.geocode_location_details(location)
+        if not details: return {"success": False, "error": f"Could not resolve location: {location}"}
+        weather = weather_client.fetch_weather(details["latitude"], details["longitude"])
+    except weather_client.UpstreamError as exc:
+        return _upstream_failure(exc)
+    current = weather.get("current", {}); daily = weather.get("daily", {})
     return {"success": True, "location": details, "timezone": weather.get("timezone"), "current": current, "current_summary": _current_summary(current, daily, weather.get("timezone")), "daily": daily, "forecast_summary": [_daily_summary(weather, d) for d in daily.get("time") or []]}
 
 @mcp.tool()
@@ -187,9 +196,13 @@ def get_forecast(location: str, date: str = "tomorrow") -> dict[str, Any]:
     """Get a forecast for today, tomorrow, or YYYY-MM-DD."""
     location = location.strip() if location else ""
     if not location: raise ValueError("location cannot be empty")
-    details = weather_client.geocode_location_details(location)
-    if not details: return {"success": False, "error": f"Could not resolve location: {location}"}
-    weather = weather_client.fetch_weather(details["latitude"], details["longitude"]); target = _target_date(date, weather.get("daily", {}))
+    try:
+        details = weather_client.geocode_location_details(location)
+        if not details: return {"success": False, "error": f"Could not resolve location: {location}"}
+        weather = weather_client.fetch_weather(details["latitude"], details["longitude"])
+    except weather_client.UpstreamError as exc:
+        return _upstream_failure(exc)
+    target = _target_date(date, weather.get("daily", {}))
     return {"success": True, "location": details, "forecast": _daily_summary(weather, target), "source": "open-meteo"}
 
 @mcp.tool()

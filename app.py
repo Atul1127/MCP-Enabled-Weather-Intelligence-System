@@ -32,6 +32,12 @@ def _safe_location(value: object) -> str:
     return validate_location(value)  # type: ignore[arg-type]
 
 
+def _upstream_error(exc: weather_client.UpstreamError, what: str):
+    """Report which outside provider failed (host + status only, no secrets)."""
+    logger.warning("%s failed: %s (status %s)", what, exc, exc.status)
+    return jsonify({"error": f"{what} failed: weather provider unavailable", "provider": exc.service, "provider_status": exc.status}), 502
+
+
 def _sync_authorized() -> bool:
     if os.environ.get("WEATHER_ALLOW_SYNC", "0") != "1":
         return False
@@ -78,6 +84,8 @@ def weather_current():
             return jsonify({"error": "Location could not be resolved"}), 404
         weather = weather_client.fetch_weather(details["latitude"], details["longitude"])
         return jsonify({"success": True, "location": details, "current": weather.get("current", {}), "hourly": weather.get("hourly", {}), "daily": weather.get("daily", {})})
+    except weather_client.UpstreamError as exc:
+        return _upstream_error(exc, "Current weather lookup")
     except Exception:
         logger.exception("Current weather request failed")
         return jsonify({"error": "Failed to fetch weather"}), 502
@@ -97,6 +105,8 @@ def weather_alerts():
         weather = weather_client.fetch_weather(details["latitude"], details["longitude"])
         alerts = weather_client.detect_alerts(weather.get("daily", {}))
         return jsonify({"success": True, "location": details, "alerts": alerts, "alert_count": len(alerts), "highest_severity": weather_client.highest_severity(alerts)})
+    except weather_client.UpstreamError as exc:
+        return _upstream_error(exc, "Weather alert lookup")
     except Exception:
         logger.exception("Weather alert request failed")
         return jsonify({"error": "Failed to generate alerts"}), 502

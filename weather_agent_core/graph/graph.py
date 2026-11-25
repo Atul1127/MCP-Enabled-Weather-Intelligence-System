@@ -5,6 +5,9 @@ from typing import Any, Awaitable, Callable
 
 from .state import GraphState
 
+# Failures that another Gemini round cannot fix: stop and report instead of retrying.
+_TERMINAL_ERRORS = frozenset({"timeout", "execution_error", "upstream_unavailable"})
+
 Node = Callable[[GraphState], Awaitable[dict[str, Any]]]
 
 
@@ -84,7 +87,7 @@ def build_weather_graph(
             result = observation.get("result")
             if isinstance(result, dict) and result.get("success") is False:
                 error_type = str(result.get("error_type") or "")
-                if error_type in {"timeout", "execution_error"}:
+                if error_type in _TERMINAL_ERRORS:
                     return "verifier"
         return "reasoner"
 
@@ -99,7 +102,7 @@ def build_weather_graph(
         terminal_mcp_failure = any(
             isinstance(item.get("result"), dict)
             and item["result"].get("success") is False
-            and str(item["result"].get("error_type") or "") in {"timeout", "execution_error"}
+            and str(item["result"].get("error_type") or "") in _TERMINAL_ERRORS
             for item in observations
         )
         if terminal_mcp_failure:
