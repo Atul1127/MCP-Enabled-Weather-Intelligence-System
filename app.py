@@ -1,7 +1,6 @@
 """Indian Weather RAG API and intelligence dashboard."""
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import secrets
@@ -11,6 +10,7 @@ from flask import Flask, jsonify, render_template, request
 import lakebase
 from rag import rag_service
 import weather_client
+from mcp_integration.runtime import runtime as mcp_runtime
 from weather_agent_core import WeatherAgent
 from weather_agent_core.security import inspect_text, validate_location, validate_top_k, validate_user_query
 
@@ -18,6 +18,14 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("weather-rag")
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("WEATHER_MAX_REQUEST_BYTES", "262144"))
+# Must stay below Gunicorn's worker timeout (120s) so the client gets a JSON error.
+AGENT_TIMEOUT_SECONDS = float(os.getenv("WEATHER_AGENT_TIMEOUT", "100"))
+
+
+def _run_agent(query: str) -> dict:
+    """Run the agent against this worker's long-lived MCP server session."""
+    agent = WeatherAgent()
+    return mcp_runtime.run(lambda session: agent.run(query, mcp_session=session), timeout=AGENT_TIMEOUT_SECONDS)
 
 
 def _safe_location(value: object) -> str:
@@ -132,8 +140,11 @@ def weather_agent():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     try:
-        result = asyncio.run(WeatherAgent().run(query))
+        result = _run_agent(query)
         return jsonify(result), 200 if result.get("success") else 502
+    except TimeoutError:
+        logger.warning("Weather agent request timed out")
+        return jsonify({"error": "The agent took too long to answer; please try again"}), 504
     except Exception:
         logger.exception("Weather agent request failed")
         return jsonify({"error": "Failed to generate agent answer"}), 502

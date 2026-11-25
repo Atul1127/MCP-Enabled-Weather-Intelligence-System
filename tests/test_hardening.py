@@ -1,6 +1,13 @@
 import asyncio
 
 import app
+
+
+class _InlineRuntime:
+    """Stand-in for the persistent MCP runtime: runs the agent coroutine inline."""
+
+    def run(self, work, *, timeout):
+        return asyncio.run(work(None))
 import services.llm as llm_provider
 
 
@@ -13,10 +20,11 @@ def test_agent_endpoint_rejects_empty_query():
 def test_agent_endpoint_uses_canonical_agent(monkeypatch):
     expected = {"success": True, "answer": "ok", "trace_id": "test"}
 
-    async def fake_run(self, query):
+    async def fake_run(self, query, mcp_session=None):
         assert query == "Weather in Kolkata"
         return expected
 
+    monkeypatch.setattr(app, "mcp_runtime", _InlineRuntime())
     monkeypatch.setattr(app.WeatherAgent, "run", fake_run)
     response = app.app.test_client().post(
         "/weather/agent",
@@ -27,9 +35,10 @@ def test_agent_endpoint_uses_canonical_agent(monkeypatch):
 
 
 def test_agent_endpoint_returns_gateway_error_without_leaking_details(monkeypatch):
-    async def fake_run(self, query):
+    async def fake_run(self, query, mcp_session=None):
         raise RuntimeError("secret database URL")
 
+    monkeypatch.setattr(app, "mcp_runtime", _InlineRuntime())
     monkeypatch.setattr(app.WeatherAgent, "run", fake_run)
     response = app.app.test_client().post(
         "/weather/agent",

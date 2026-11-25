@@ -12,7 +12,6 @@ from urllib.parse import urlsplit, urlunsplit
 
 import psycopg
 from psycopg.rows import dict_row
-from sqlalchemy import create_engine
 
 DATABASE_BACKEND = os.environ.get("DATABASE_BACKEND", "local").lower().strip()
 LOCAL_DATABASE_URL = os.environ.get(
@@ -98,6 +97,8 @@ def get_connection():
 
 
 def get_engine():
+    from sqlalchemy import create_engine  # heavy import; only needed here
+
     database_url = get_database_url()
     if database_url.startswith("postgresql://"):
         database_url = database_url.replace("postgresql://", "postgresql+psycopg://", 1)

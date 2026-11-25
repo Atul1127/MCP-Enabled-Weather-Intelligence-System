@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import os
 import re
@@ -175,8 +176,12 @@ class WeatherAgent:
             instruction += "\n\nVERIFIER FEEDBACK:\n" + retry_reason + "\nCorrect the missing evidence by selecting appropriate MCP tools from the exposed declarations."
         return await asyncio.to_thread(generate_with_tools, messages, declarations=declarations, system_instruction=instruction, temperature=0.0, model=self.model)
 
-    async def run(self, query: str) -> dict[str, Any]:
-        """Execute the complete weather-agent workflow."""
+    async def run(self, query: str, mcp_session: Any = None) -> dict[str, Any]:
+        """Execute the complete weather-agent workflow.
+
+        ``mcp_session`` lets the caller reuse a long-lived MCP session; without
+        it a dedicated MCP server process is started for this run.
+        """
         query = query.strip()
         if not query:
             raise ValueError("Query cannot be empty")
@@ -188,7 +193,8 @@ class WeatherAgent:
         runtime = AgentState(query=query, trace_id=trace_id)
         emit("agent.start", trace_id=trace_id, model=self.model)
 
-        async with connect(trace_id=trace_id) as session:
+        async with contextlib.AsyncExitStack() as stack:
+            session = mcp_session if mcp_session is not None else await stack.enter_async_context(connect(trace_id=trace_id))
             discovered = await discover_tools(session)
             registry = MCPCapabilityRegistry(discovered, allowed_tools=ALLOWED_TOOLS)
             capability_router = MCPCapabilityRouter(registry)
