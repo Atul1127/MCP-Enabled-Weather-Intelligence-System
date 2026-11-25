@@ -9,7 +9,7 @@ import copy
 import json
 import os
 
-import lakebase, weather_client
+import lakebase, weather_client, weather_rules
 
 try:
     from mcp.server import MCPServer
@@ -197,36 +197,18 @@ def get_weather_alerts(location: str) -> dict[str, Any]:
     """Detect actionable hazards from the live 7-day forecast."""
     weather = get_weather(location)
     if not weather.get("success"): return weather
-    daily = weather.get("daily", {}); alerts = []
-    for i, target in enumerate(daily.get("time", [])):
-        probabilities = daily.get("precipitation_probability_max") or []; rains = daily.get("precipitation_sum") or []; winds = daily.get("wind_speed_10m_max") or []; apparents = daily.get("apparent_temperature_max") or []; codes = daily.get("weather_code") or []
-        probability = probabilities[i] if i < len(probabilities) else 0; rain = rains[i] if i < len(rains) else 0; wind = winds[i] if i < len(winds) else 0; apparent = apparents[i] if i < len(apparents) else 0; code = codes[i] if i < len(codes) else 0
-        if probability >= 70 and rain >= 15: alerts.append({"date": target, "severity": "HIGH", "hazard": "Heavy rain", "probability": probability, "details": f"{rain:.1f} mm expected with {probability}% precipitation probability."})
-        elif probability >= 70: alerts.append({"date": target, "severity": "MODERATE", "hazard": "High rain probability", "probability": probability, "details": f"Precipitation probability is {probability}%."})
-        if wind >= 40: alerts.append({"date": target, "severity": "HIGH", "hazard": "Strong wind", "details": f"Maximum forecast wind is {wind:.1f} km/h."})
-        if apparent >= 40: alerts.append({"date": target, "severity": "HIGH", "hazard": "Extreme heat", "details": f"Maximum apparent temperature is {apparent:.1f}°C."})
-        elif apparent >= 35: alerts.append({"date": target, "severity": "MODERATE", "hazard": "High heat", "details": f"Maximum apparent temperature is {apparent:.1f}°C."})
-        if code >= 95: alerts.append({"date": target, "severity": "HIGH", "hazard": "Thunderstorm", "details": f"Forecast weather code is {code}."})
-    alerts.sort(key=lambda x: (0 if x["severity"] == "HIGH" else 1, x["date"]))
-    return {"success": True, "location": weather["location"], "alerts": alerts, "alert_count": len(alerts), "highest_severity": alerts[0]["severity"] if alerts else "NONE", "disclaimer": "Application-level forecast hazard detection; not an official government warning."}
+    alerts = weather_rules.detect_alerts(weather.get("daily", {}))
+    return {"success": True, "location": weather["location"], "alerts": alerts, "alert_count": len(alerts), "highest_severity": weather_rules.highest_severity(alerts), "disclaimer": weather_rules.DISCLAIMER}
 
 @mcp.tool()
 def assess_weather_risk(location: str, activity: str = "outdoor activity", date: str = "tomorrow") -> dict[str, Any]:
     """Assess activity risk for a specific forecast date."""
-    activity = activity.strip() if activity else "outdoor activity"; activity = activity or "outdoor activity"; weather = get_weather(location)
+    activity = (activity or "").strip() or "outdoor activity"
+    weather = get_weather(location)
     if not weather.get("success"): return weather
-    target = _target_date(date, weather.get("daily", {})); forecast = _daily_summary(weather, target); rain_probability = forecast["precipitation_probability_pct"] or 0; precipitation = forecast["precipitation_mm"] or 0; wind = forecast["max_wind_kmh"] or 0; apparent = forecast["apparent_temperature_max_c"] or 0; code = forecast["weather_code"] or 0; score = 0; factors = []
-    if rain_probability >= 70: score += 2; factors.append(f"high precipitation probability ({rain_probability}%)")
-    elif rain_probability >= 40: score += 1; factors.append(f"moderate precipitation probability ({rain_probability}%)")
-    if precipitation >= 10: score += 2; factors.append(f"heavy expected precipitation ({precipitation:.1f} mm)")
-    elif precipitation >= 3: score += 1; factors.append(f"expected precipitation ({precipitation:.1f} mm)")
-    if wind >= 30: score += 2; factors.append(f"strong wind ({wind:.1f} km/h)")
-    elif wind >= 20: score += 1; factors.append(f"elevated wind ({wind:.1f} km/h)")
-    if apparent >= 40: score += 2; factors.append(f"very high apparent temperature ({apparent:.1f}°C)")
-    elif apparent >= 35: score += 1; factors.append(f"high apparent temperature ({apparent:.1f}°C)")
-    if code >= 95: score += 2; factors.append("thunderstorm risk in the forecast")
-    risk = "HIGH" if score >= 5 else "MODERATE" if score >= 2 else "LOW"; recommendation = f"Avoid or postpone the {activity} if possible." if risk == "HIGH" else f"The {activity} is possible with precautions and a backup plan." if risk == "MODERATE" else f"Conditions look generally suitable for the {activity}."
-    return {"success": True, "location": weather["location"], "activity": activity, "date": target, "forecast": forecast, "risk_level": risk, "score": score, "recommendation": recommendation, "factors": factors or ["no major weather risk detected"]}
+    target = _target_date(date, weather.get("daily", {})); forecast = _daily_summary(weather, target)
+    assessment = weather_rules.assess_activity_risk(forecast, activity)
+    return {"success": True, "location": weather["location"], "activity": activity, "date": target, "forecast": forecast, **assessment}
 
 @mcp.tool()
 def search_weather(query: str, top_k: int = 5, location: str | None = None, state: str | None = None) -> dict[str, Any]:

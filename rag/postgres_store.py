@@ -3,6 +3,9 @@ from __future__ import annotations
 from typing import Any
 import lakebase
 
+# Must match the configuration used for the search_tsv column in db/init.sql.
+FTS_CONFIG = "english"
+
 
 class PostgresRagStore:
     """Database-backed RAG store using PostgreSQL full-text + pgvector retrieval."""
@@ -45,33 +48,43 @@ class PostgresRagStore:
         tokens = re.findall(r"[\w]+", query, flags=re.UNICODE)
         return " | ".join(token for token in tokens[:16] if len(token) >= 3)
 
-    def bm25_search(self, query: str, limit: int, allowed: list[str] | None = None) -> list[dict[str, Any]]:
+    _SELECT_COLUMNS = """
+        d.id, d.location, d.state, d.district, d.source, d.source_type,
+        d.headline, d.narrative_text, d.forecast_date, d.temperature_min_c,
+        d.temperature_max_c, d.rainfall_mm, d.precipitation_probability,
+        d.weather_code, d.severity
+    """
+
+    def _lexical_query(self, tsquery_sql: str, query: str, limit: int, allowed: list[str] | None) -> list[dict[str, Any]]:
         extra, extra_params = self._ids_clause(allowed)
+        # Filtering with @@ lets PostgreSQL use the GIN index on search_tsv.
         rows = lakebase.run_query(f"""
-            SELECT d.id, d.location, d.state, d.district, d.source, d.source_type,
-                   d.headline, d.narrative_text, d.forecast_date, d.temperature_min_c,
-                   d.temperature_max_c, d.rainfall_mm, d.precipitation_probability,
-                   d.weather_code, d.severity,
-                   ts_rank_cd(to_tsvector('simple', concat_ws(' ', d.location, d.state, d.district, d.headline, d.narrative_text)), plainto_tsquery('simple', %s)) AS bm25_score
-            FROM weather_documents d WHERE 1 = 1 {extra}
-            ORDER BY bm25_score DESC, d.synced_at DESC NULLS LAST LIMIT %s
+            SELECT {self._SELECT_COLUMNS},
+                   ts_rank_cd(d.search_tsv, q) AS lexical_score
+            FROM weather_documents d, {tsquery_sql} AS q
+            WHERE d.search_tsv @@ q {extra}
+            ORDER BY lexical_score DESC, d.synced_at DESC NULLS LAST
+            LIMIT %s
         """, tuple([query, *extra_params, int(limit)]))
-        matches = [dict(row) for row in rows if float(row.get("bm25_score") or 0) > 0]
+        return [dict(row) for row in rows]
+
+    def lexical_search(self, query: str, limit: int, allowed: list[str] | None = None) -> list[dict[str, Any]]:
+        """PostgreSQL full-text search ranked with ts_rank_cd.
+
+        This is cover-density ranking, not BM25. Every query word is required
+        first; if nothing matches, any word is accepted.
+        """
+        matches = self._lexical_query(f"plainto_tsquery('{FTS_CONFIG}', %s)", query, limit, allowed)
         if matches:
             return matches
         relaxed = self._fts_or_query(query)
         if not relaxed:
             return []
-        rows = lakebase.run_query(f"""
-            SELECT d.id, d.location, d.state, d.district, d.source, d.source_type,
-                   d.headline, d.narrative_text, d.forecast_date, d.temperature_min_c,
-                   d.temperature_max_c, d.rainfall_mm, d.precipitation_probability,
-                   d.weather_code, d.severity,
-                   ts_rank_cd(to_tsvector('simple', concat_ws(' ', d.location, d.state, d.district, d.headline, d.narrative_text)), to_tsquery('simple', %s)) AS bm25_score
-            FROM weather_documents d WHERE 1 = 1 {extra}
-            ORDER BY bm25_score DESC, d.synced_at DESC NULLS LAST LIMIT %s
-        """, tuple([relaxed, *extra_params, int(limit)]))
-        return [dict(row) for row in rows if float(row.get("bm25_score") or 0) > 0]
+        return self._lexical_query(f"to_tsquery('{FTS_CONFIG}', %s)", relaxed, limit, allowed)
+
+    # Kept so existing callers (rag.retrieval.sparse) keep working.
+    def bm25_search(self, query: str, limit: int, allowed: list[str] | None = None) -> list[dict[str, Any]]:
+        return self.lexical_search(query, limit, allowed)
 
     def dense_search(self, query_vector: list[float], limit: int, allowed: list[str] | None = None) -> list[dict[str, Any]]:
         vector_literal = "[" + ",".join(repr(float(v)) for v in query_vector) + "]"

@@ -83,7 +83,12 @@ class RAGPipeline:
         limit = self.top_k if top_k is None else max(1, min(20, int(top_k)))
         plan = analyze(text, location=location, state=state)
         store = self._get_store()
-        allowed = store.filtered_rows(location=location, state=state, source_type=source_type)
+        # Only build an ID filter when a filter was actually requested; an
+        # unfiltered search would otherwise send every document ID to the store.
+        if location or state or source_type:
+            allowed = store.filtered_rows(location=location, state=state, source_type=source_type)
+        else:
+            allowed = None
 
         sparse = sparse_search(store, plan.query, self.sparse_k, allowed)
         if self._should_use_dense():

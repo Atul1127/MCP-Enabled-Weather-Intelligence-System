@@ -15,10 +15,15 @@ def _confidence(values: list[float], value: float) -> float:
     return max(0.0, min(1.0, (value - lo) / (hi - lo)))
 
 def _score(row: dict[str, Any], key: str, fallback: str) -> float:
-    try:
-        return float(row.get(key, row.get(fallback, 0.0)) or 0.0)
-    except (TypeError, ValueError):
-        return 0.0
+    # Sparse rows carry "bm25_score" (local rank_bm25 store) or "lexical_score"
+    # (PostgreSQL ts_rank_cd, which is not BM25).
+    for name in (key, "lexical_score" if key == "bm25_score" else None, fallback):
+        if name and row.get(name) is not None:
+            try:
+                return float(row[name])
+            except (TypeError, ValueError):
+                return 0.0
+    return 0.0
 
 def _id(row: dict[str, Any]) -> str | None:
     value = row.get("id", row.get("document_id"))

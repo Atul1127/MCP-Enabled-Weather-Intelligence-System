@@ -1,8 +1,36 @@
 """Explicit state passed between agent layers."""
 from __future__ import annotations
+import re
 from dataclasses import dataclass, field
 from typing import Any
 from .evidence import Evidence, normalize_tool_result
+
+_CITATION_RE = re.compile(r"\[S(\d+)\]")
+_SEARCH_TOOLS = {"search_weather", "ask_weather"}
+
+
+def _renumber_citations(result: dict[str, Any], offset: int) -> None:
+    """Shift [S1], [S2], ... in one search result by ``offset``, in place.
+
+    Each search numbers its sources from S1, so two searches in one request
+    would both produce an [S1]. Renumbering keeps every ID unique within the
+    request before the model or the citation validator sees them.
+    """
+    if offset <= 0:
+        return
+    sources = [source for source in result.get("sources") or [] if isinstance(source, dict)]
+    known = {str(source.get("citation")) for source in sources if source.get("citation")}
+
+    def shift(match: re.Match[str]) -> str:
+        label = f"S{match.group(1)}"
+        return f"[S{int(match.group(1)) + offset}]" if label in known else match.group(0)
+
+    if isinstance(result.get("context"), str):
+        result["context"] = _CITATION_RE.sub(shift, result["context"])
+    for source in sources:
+        citation = str(source.get("citation") or "")
+        if citation in known and citation[1:].isdigit():
+            source["citation"] = f"S{int(citation[1:]) + offset}"
 
 @dataclass
 class AgentState:
@@ -20,6 +48,9 @@ class AgentState:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def add_observation(self, tool: str, arguments: dict[str, Any], result: Any) -> None:
+        if tool in _SEARCH_TOOLS and isinstance(result, dict):
+            # Continue numbering after the sources already collected.
+            _renumber_citations(result, len(self.sources))
         self.tool_calls.append({"name": tool, "arguments": arguments})
         self.observations.append({"tool": tool, "arguments": arguments, "result": result})
         if isinstance(result, dict) and result.get("success") is False:

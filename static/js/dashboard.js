@@ -315,8 +315,11 @@ async function askAgentRequest(query) {
     const citations = Array.isArray(data.citations) && data.citations.length
       ? `<div class="answer-meta"><span>Grounded answer</span><span>Sources ${data.citations.map(c => escapeHtml(c)).join(' · ')}</span></div>`
       : '';
-    const confidence = typeof data.confidence === 'number'
-      ? `<span>Confidence ${Math.round(data.confidence * 100)}%</span>`
+    // Confidence is a level computed by the server from tool results:
+    // complete, partial or no_live_data.
+    const confidenceLabels = { complete: 'Evidence: complete', partial: 'Evidence: partial', no_live_data: 'Evidence: no live data' };
+    const confidence = confidenceLabels[data.confidence]
+      ? `<span title="${escapeHtml((data.confidence_reasons || []).join(' '))}">${confidenceLabels[data.confidence]}</span>`
       : '';
     const warnings = Array.isArray(data.warnings) && data.warnings.length
       ? `<div class="answer-warning">⚠️ ${escapeHtml(data.warnings.join(' '))}</div>`

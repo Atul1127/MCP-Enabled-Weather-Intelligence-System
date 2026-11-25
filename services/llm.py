@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from typing import Any, Sequence
 
@@ -39,16 +40,37 @@ def _gemini_client() -> Any:
     return _GEMINI_CLIENT
 
 
+_TRANSIENT_STATUS_CODES = {500, 502, 503, 504}
+_TRANSIENT_STATUS_NAMES = {"UNAVAILABLE", "INTERNAL", "DEADLINE_EXCEEDED"}
+
+
 def _gemini_error_kind(exc: Exception) -> str:
-    text = str(exc).upper()
-    status = getattr(exc, "status_code", None)
-    if status is None:
-        status = getattr(exc, "code", None)
-    if "RESOURCE_EXHAUSTED" in text or "QUOTA_EXCEEDED" in text or "QUOTA EXHAUSTED" in text:
+    """Classify a Gemini error from its HTTP status code and status name.
+
+    google-genai raises errors.APIError with ``code`` (HTTP status) and
+    ``status`` (e.g. "RESOURCE_EXHAUSTED"). Bare numbers in the message are
+    not used, so a message that merely mentions "500 tokens" is not mistaken
+    for a server error.
+    """
+    raw_code = getattr(exc, "status_code", None)
+    if raw_code is None:
+        raw_code = getattr(exc, "code", None)
+    try:
+        code = int(raw_code) if raw_code is not None else None
+    except (TypeError, ValueError):
+        code = None
+    status_name = str(getattr(exc, "status", "") or "").upper()
+    message = str(exc).upper()
+
+    if status_name == "RESOURCE_EXHAUSTED" or re.search(r"\bRESOURCE_EXHAUSTED\b|\bQUOTA[ _]EXCEEDED\b|\bQUOTA EXHAUSTED\b", message):
         return "quota"
-    if status == 429 or any(marker in text for marker in ("429", "RATE LIMIT", "TOO MANY REQUESTS")):
+    if code == 429 or re.search(r"\bRATE[ _]LIMIT|\bTOO MANY REQUESTS\b", message):
         return "rate_limit"
-    if status in {500, 502, 503, 504} or any(marker in text for marker in ("500", "502", "503", "504", "UNAVAILABLE", "INTERNAL", "DEADLINE_EXCEEDED")):
+    if code in _TRANSIENT_STATUS_CODES or status_name in _TRANSIENT_STATUS_NAMES:
+        return "transient"
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return "transient"
+    if code is None and re.search(r"\b(?:UNAVAILABLE|DEADLINE_EXCEEDED)\b", message):
         return "transient"
     return "permanent"
 
@@ -93,7 +115,8 @@ def _generate_with_fallback(*, contents: Any, config_factory: Any, primary_model
         for attempt in range(2):
             try:
                 response = client.models.generate_content(model=model, contents=contents, config=config_factory(model))
-                os.environ["GEMINI_LAST_MODEL"] = model
+                # The model actually used is returned to the caller. It used to
+                # be written to os.environ, which threads overwrite.
                 return response, model
             except Exception as exc:
                 kind = _gemini_error_kind(exc)

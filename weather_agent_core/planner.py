@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
-from .router import classify, is_simple_current
+from .router import _any_marker, classify, is_simple_current
 
 
 @dataclass(frozen=True)
@@ -41,10 +41,24 @@ class Planner:
         risk = intent == "activity_risk"
         alerts = intent == "alerts"
         knowledge = intent == "knowledge"
+        live_knowledge = intent == "live_knowledge"
         current = is_simple_current(query)
-        live = intent in {"live_weather", "activity_risk", "comparison", "alerts"} or current
+        live = intent in {"live_weather", "live_knowledge", "activity_risk", "comparison", "alerts"} or current
 
-        if knowledge:
+        if live_knowledge:
+            # Place + time + "why"/"precautions": live data is required, the
+            # knowledge base adds the explanation or advice.
+            preferred = (
+                ("get_weather", "get_forecast")
+                if _any_marker(text, ("now", "right now", "today", "currently", "tonight"))
+                else ("get_forecast", "get_weather")
+            )
+            steps = (
+                PlanStep("live_weather", "live_weather", preferred),
+                PlanStep("knowledge", "knowledge", ("search_weather",), required=False),
+                PlanStep("hazards", "alerts", ("get_weather_alerts",), required=False),
+            )
+        elif knowledge:
             steps = (
                 PlanStep("knowledge", "knowledge", ("search_weather", "ask_weather"), required=True, parallelizable=False),
             )
@@ -79,7 +93,11 @@ class Planner:
         else:
             preferred = (
                 ("get_forecast", "get_weather")
-                if any(x in text for x in ("forecast", "tomorrow", "next week"))
+                if any(x in text for x in (
+                    "forecast", "tomorrow", "next week", "this week", "weekend",
+                    "next few days", "monday", "tuesday", "wednesday", "thursday",
+                    "friday", "saturday", "sunday",
+                ))
                 else ("get_weather", "get_forecast")
             )
             steps = (
@@ -91,6 +109,6 @@ class Planner:
             intent=intent,
             steps=steps,
             requires_live_data=live,
-            requires_knowledge=knowledge or comparison,
+            requires_knowledge=knowledge or comparison or live_knowledge,
         )
         return plan.as_dict()

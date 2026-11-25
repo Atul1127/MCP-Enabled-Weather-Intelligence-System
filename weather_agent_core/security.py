@@ -5,13 +5,18 @@ import re
 import unicodedata
 from typing import Any
 
+# A cheap first filter for obvious instruction-override attempts. It is NOT the
+# real defence: the agent can only call read-only, allowlisted tools with
+# validated arguments, and its answer is structured and post-checked. Patterns
+# target *instructions*, so a user asking "what is prompt injection?" is fine.
 _INJECTION_PATTERNS = (
-    re.compile(r"ignore\s+(all|any|the|previous)\s+instructions", re.I),
-    re.compile(r"disregard\s+(all|any|the|previous)\s+instructions", re.I),
-    re.compile(r"system\s+message\s*[:=]", re.I),
-    re.compile(r"reveal\s+(the\s+)?(system|developer)\s+prompt", re.I),
-    re.compile(r"(?:developer|system)\s+instructions?\s*[:=]", re.I),
-    re.compile(r"jailbreak|prompt\s+injection", re.I),
+    re.compile(r"\b(?:ignore|disregard|forget|override|bypass)\s+(?:all\s+|any\s+|the\s+|your\s+|my\s+)?(?:previous\s+|prior\s+|above\s+|earlier\s+|system\s+)?(?:instructions|rules|guidelines|prompts?)\b", re.I),
+    re.compile(r"\bsystem\s+message\s*[:=]", re.I),
+    re.compile(r"\b(?:reveal|show|print|repeat|leak)\s+(?:me\s+)?(?:the\s+|your\s+)?(?:system|developer|hidden)\s+(?:prompt|instructions)\b", re.I),
+    re.compile(r"\b(?:developer|system)\s+instructions?\s*[:=]", re.I),
+    re.compile(r"\b(?:enable|activate|enter|switch\s+to)\s+(?:jailbreak|developer|dan|god)\s+mode\b", re.I),
+    re.compile(r"\byou\s+are\s+now\s+(?:dan|unrestricted|unfiltered|in\s+developer\s+mode)\b", re.I),
+    re.compile(r"\bact\s+as\s+(?:an?\s+)?(?:unrestricted|unfiltered|jailbroken)\b", re.I),
 )
 _ZERO_WIDTH = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060\ufeff]")
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")

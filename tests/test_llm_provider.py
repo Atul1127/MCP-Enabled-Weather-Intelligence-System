@@ -57,3 +57,37 @@ def test_quota_failure_skips_same_model_retry(monkeypatch: pytest.MonkeyPatch):
         )
 
     assert FakeClient.models.calls == 1
+
+
+def test_number_in_message_is_not_a_server_error():
+    assert _gemini_error_kind(ValueError("prompt is 500 tokens over the limit")) == "permanent"
+
+
+def test_status_name_is_used_when_present():
+    class FakeApiError(Exception):
+        code = 503
+        status = "UNAVAILABLE"
+
+    class FakeQuota(Exception):
+        code = 429
+        status = "RESOURCE_EXHAUSTED"
+
+    assert _gemini_error_kind(FakeApiError("x")) == "transient"
+    assert _gemini_error_kind(FakeQuota("x")) == "quota"
+
+
+def test_model_name_is_not_written_to_the_environment(monkeypatch: pytest.MonkeyPatch):
+    import os
+
+    class FakeModels:
+        def generate_content(self, **_: object) -> str:
+            return "ok"
+
+    class FakeClient:
+        models = FakeModels()
+
+    monkeypatch.setattr(llm_provider, "_GEMINI_CLIENT", FakeClient())
+    monkeypatch.delenv("GEMINI_LAST_MODEL", raising=False)
+    response, model = _generate_with_fallback(contents="x", config_factory=lambda _: object(), primary_model="gemini-test")
+    assert (response, model) == ("ok", "gemini-test")
+    assert "GEMINI_LAST_MODEL" not in os.environ

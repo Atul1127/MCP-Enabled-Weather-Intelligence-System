@@ -196,21 +196,28 @@ def ensure_weather_tables(embedding_dim: int = 384) -> None:
     for index_name, column_name in indexes:
         run_write(f"CREATE INDEX IF NOT EXISTS {index_name} ON weather_documents ({column_name})")
 
-    # concat_ws() is STABLE, which PostgreSQL forbids in expression indexes.
+    # Generated full-text column + GIN index. rag/postgres_store.py filters
+    # with "search_tsv @@ query", which is what lets PostgreSQL use the index.
     run_write(
         """
-        CREATE INDEX IF NOT EXISTS idx_weather_documents_fts
-        ON weather_documents USING gin (
+        ALTER TABLE weather_documents
+        ADD COLUMN IF NOT EXISTS search_tsv tsvector
+        GENERATED ALWAYS AS (
             to_tsvector(
-                'simple',
+                'english',
                 COALESCE(location, '') || ' ' ||
                 COALESCE(state, '') || ' ' ||
                 COALESCE(district, '') || ' ' ||
                 COALESCE(headline, '') || ' ' ||
                 COALESCE(narrative_text, '')
             )
-        )
+        ) STORED
         """
+    )
+    run_write("DROP INDEX IF EXISTS idx_weather_documents_fts")
+    run_write(
+        "CREATE INDEX IF NOT EXISTS idx_weather_documents_search_tsv "
+        "ON weather_documents USING gin (search_tsv)"
     )
 
     run_write(

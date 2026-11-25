@@ -47,16 +47,23 @@ CREATE INDEX IF NOT EXISTS idx_weather_embeddings_document_id ON weather_embeddi
 CREATE INDEX IF NOT EXISTS idx_weather_embeddings_embedding
     ON weather_embeddings USING hnsw (embedding vector_cosine_ops);
 
--- concat_ws() is STABLE rather than IMMUTABLE, so PostgreSQL rejects it in an
--- expression index. Build the equivalent text with immutable concatenation.
-CREATE INDEX IF NOT EXISTS idx_weather_documents_fts
-    ON weather_documents USING gin (
+-- Full-text search column. It is generated from the text fields, so it is
+-- always in sync, and the GIN index on it is used by "search_tsv @@ query".
+-- The configuration ('english') must match FTS_CONFIG in rag/postgres_store.py.
+ALTER TABLE weather_documents
+    ADD COLUMN IF NOT EXISTS search_tsv tsvector
+    GENERATED ALWAYS AS (
         to_tsvector(
-            'simple',
+            'english',
             COALESCE(location, '') || ' ' ||
             COALESCE(state, '') || ' ' ||
             COALESCE(district, '') || ' ' ||
             COALESCE(headline, '') || ' ' ||
             COALESCE(narrative_text, '')
         )
-    );
+    ) STORED;
+
+-- The old expression index never matched the query, so it was never used.
+DROP INDEX IF EXISTS idx_weather_documents_fts;
+CREATE INDEX IF NOT EXISTS idx_weather_documents_search_tsv
+    ON weather_documents USING gin (search_tsv);

@@ -10,10 +10,13 @@ and PostgreSQL/Lakebase weather_documents table.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
+import os
+import threading
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import requests
 
@@ -25,6 +28,74 @@ USER_AGENT = "weather-rag-india/1.0"
 
 REQUEST_TIMEOUT = 20
 LOCATION_DELAY_SECONDS = 1
+
+# Cache lifetimes. Places do not move, so geocoding results can be kept for a
+# long time; forecasts change roughly hourly, so weather is kept briefly.
+# Set either variable to 0 to disable that cache.
+GEOCODE_CACHE_SECONDS = int(os.environ.get("WEATHER_GEOCODE_CACHE_SECONDS", str(7 * 24 * 3600)))
+GEOCODE_MISS_CACHE_SECONDS = int(os.environ.get("WEATHER_GEOCODE_MISS_CACHE_SECONDS", "3600"))
+WEATHER_CACHE_SECONDS = int(os.environ.get("WEATHER_FORECAST_CACHE_SECONDS", "600"))
+# Nominatim's public usage policy allows at most one request per second.
+NOMINATIM_MIN_INTERVAL_SECONDS = float(os.environ.get("WEATHER_NOMINATIM_MIN_INTERVAL", "1.0"))
+
+
+class _TTLCache:
+    """Small thread-safe in-memory cache with per-entry expiry."""
+
+    def __init__(self, max_entries: int = 2048) -> None:
+        self._data: Dict[Any, Tuple[float, Any]] = {}
+        self._lock = threading.Lock()
+        self._max_entries = max_entries
+
+    def get(self, key: Any) -> Tuple[bool, Any]:
+        with self._lock:
+            entry = self._data.get(key)
+            if entry is None:
+                return False, None
+            expires_at, value = entry
+            if expires_at < time.monotonic():
+                del self._data[key]
+                return False, None
+            return True, copy.deepcopy(value)
+
+    def set(self, key: Any, value: Any, ttl_seconds: float) -> None:
+        if ttl_seconds <= 0:
+            return
+        with self._lock:
+            if len(self._data) >= self._max_entries:
+                # Drop the entry closest to expiry to stay bounded.
+                oldest = min(self._data, key=lambda item: self._data[item][0])
+                del self._data[oldest]
+            self._data[key] = (time.monotonic() + ttl_seconds, copy.deepcopy(value))
+
+    def clear(self) -> None:
+        with self._lock:
+            self._data.clear()
+
+
+_GEOCODE_CACHE = _TTLCache()
+_WEATHER_CACHE = _TTLCache(max_entries=512)
+_NOMINATIM_LOCK = threading.Lock()
+_last_nominatim_request = 0.0
+
+
+def clear_caches() -> None:
+    """Empty the geocoding and weather caches (used by tests and admin tools)."""
+    _GEOCODE_CACHE.clear()
+    _WEATHER_CACHE.clear()
+
+
+def _nominatim_get(params: Dict, headers: Dict) -> requests.Response:
+    """Call Nominatim, spacing requests to respect its rate limit."""
+    global _last_nominatim_request
+    with _NOMINATIM_LOCK:
+        wait = NOMINATIM_MIN_INTERVAL_SECONDS - (time.monotonic() - _last_nominatim_request)
+        if wait > 0:
+            time.sleep(wait)
+        try:
+            return requests.get(NOMINATIM_URL, params=params, headers=headers, timeout=REQUEST_TIMEOUT)
+        finally:
+            _last_nominatim_request = time.monotonic()
 
 
 # ---------------------------------------------------------------------------
@@ -59,39 +130,11 @@ def geocode_location(
             except ValueError:
                 pass
 
-    params = {
-        "q": f"{location}, India",
-        "format": "json",
-        "limit": 1,
-        "countrycodes": "in",
-        "addressdetails": 1,
-    }
-
-    headers = {
-        "User-Agent": USER_AGENT,
-    }
-
-    response = requests.get(
-        NOMINATIM_URL,
-        params=params,
-        headers=headers,
-        timeout=REQUEST_TIMEOUT,
-    )
-
-    response.raise_for_status()
-
-    results = response.json()
-
-    if not results:
+    # Delegate to the cached, rate-limited lookup.
+    details = geocode_location_details(location)
+    if not details:
         return None
-
-    result = results[0]
-
-    return (
-        float(result["lat"]),
-        float(result["lon"]),
-        result.get("display_name", location),
-    )
+    return details["latitude"], details["longitude"], details["display_name"]
 
 
 def geocode_location_details(
@@ -138,6 +181,11 @@ def geocode_location_details(
             except ValueError:
                 pass
 
+    cache_key = " ".join(location.lower().split())
+    found, cached = _GEOCODE_CACHE.get(cache_key)
+    if found:
+        return cached
+
     params = {
         "q": f"{location}, India",
         "format": "json",
@@ -150,25 +198,22 @@ def geocode_location_details(
         "User-Agent": USER_AGENT,
     }
 
-    response = requests.get(
-        NOMINATIM_URL,
-        params=params,
-        headers=headers,
-        timeout=REQUEST_TIMEOUT,
-    )
+    response = _nominatim_get(params, headers)
 
     response.raise_for_status()
 
     results = response.json()
 
     if not results:
+        # Remember misses briefly so a bad name is not retried every request.
+        _GEOCODE_CACHE.set(cache_key, None, GEOCODE_MISS_CACHE_SECONDS)
         return None
 
     result = results[0]
 
     address = result.get("address", {})
 
-    return {
+    details = {
         "latitude": float(result["lat"]),
         "longitude": float(result["lon"]),
         "display_name": result.get(
@@ -182,6 +227,9 @@ def geocode_location_details(
             or address.get("county")
         ),
     }
+
+    _GEOCODE_CACHE.set(cache_key, details, GEOCODE_CACHE_SECONDS)
+    return details
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +245,11 @@ def fetch_weather(
 
     Open-Meteo does not require an API key.
     """
+
+    cache_key = (round(float(latitude), 4), round(float(longitude), 4))
+    found, cached = _WEATHER_CACHE.get(cache_key)
+    if found:
+        return cached
 
     params = {
         "latitude": latitude,
@@ -249,7 +302,9 @@ def fetch_weather(
 
     response.raise_for_status()
 
-    return response.json()
+    payload = response.json()
+    _WEATHER_CACHE.set(cache_key, payload, WEATHER_CACHE_SECONDS)
+    return payload
 
 
 # ---------------------------------------------------------------------------

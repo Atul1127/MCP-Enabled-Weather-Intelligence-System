@@ -4,14 +4,17 @@ from __future__ import annotations
 import asyncio
 import inspect
 import os
+import re
 from typing import Any
 
 from google.genai import types
 from services.llm import generate_with_tools
-from mcp_integration.mcp_client import connect, discover_tools
+from mcp_integration.mcp_client import discover_tools
+from mcp_integration.session_pool import agent_session
 from services.observability import emit, new_trace_id, span
 from rag.citations.validator import validate as validate_citations
 
+from .answer_checks import evidence_status, unverified_numbers
 from .decomposer import decompose
 from .executor import MCPExecutor
 from .graph import build_weather_graph
@@ -19,7 +22,7 @@ from .graph.state import GraphState
 from .mcp_registry import MCPCapabilityRegistry
 from .mcp_router import MCPCapabilityRouter
 from .planner import Planner
-from .router import classify
+from .router import classify, extract_location
 from .security import inspect_text
 from .state import AgentState
 from .synthesizer import GeminiSynthesizer
@@ -59,41 +62,45 @@ class WeatherAgent:
         return [types.FunctionDeclaration(name=item.name, description=item.description, parameters=item.schema) for item in selected]
 
     @staticmethod
-    def _infer_tool_args(tool: str, query: str) -> dict[str, Any]:
-        """Build safe fallback arguments for a required capability."""
-        text = " ".join(query.split())
-        lowered = text.lower()
-        location = None
-        marker = " in "
-        if marker in lowered:
-            start = lowered.rfind(marker) + len(marker)
-            location = text[start:].strip()
-            for suffix in (" tomorrow", " today", " tonight"):
-                if location.lower().endswith(suffix):
-                    location = location[: -len(suffix)].strip()
-                    break
-        if tool in {"search_weather", "ask_weather"}:
-            return {"query": query}
-        if tool in {"get_weather", "get_weather_alerts"}:
-            return {"location": location or query}
-        if tool == "get_forecast":
-            args = {"location": location or query}
-            if "tomorrow" in lowered:
-                args["date"] = "tomorrow"
-            elif "today" in lowered:
-                args["date"] = "today"
-            return args
-        if tool == "assess_weather_risk":
-            args = {"location": location or query}
-            if "tomorrow" in lowered:
-                args["date"] = "tomorrow"
-            elif "today" in lowered:
-                args["date"] = "today"
-            return args
-        return {}
+    def _query_date(query: str) -> str | None:
+        """Return "today" or "tomorrow" when the query names exactly one of them."""
+        lowered = " ".join(query.lower().split())
+        has_today = re.search(r"\btoday\b|\btonight\b", lowered) is not None
+        has_tomorrow = re.search(r"\btomorrow\b", lowered) is not None
+        if has_tomorrow and not has_today:
+            return "tomorrow"
+        if has_today and not has_tomorrow:
+            return "today"
+        return None
 
     @classmethod
-    def _ensure_required_tool_calls(cls, calls: list[Any], plan: dict[str, Any], query: str) -> list[Any]:
+    def _infer_tool_args(cls, tool: str, query: str) -> dict[str, Any] | None:
+        """Build safe fallback arguments for a required capability.
+
+        Returns None when a location-based tool is needed but no place can be
+        found in the query: calling the tool with the whole question as the
+        "location" only produces a confusing geocoding failure.
+        """
+        if tool in {"search_weather", "ask_weather"}:
+            return {"query": query}
+        location = extract_location(query)
+        if location is None:
+            return None
+        args: dict[str, Any] = {"location": location}
+        if tool in {"get_forecast", "assess_weather_risk"}:
+            date = cls._query_date(query)
+            if date:
+                args["date"] = date
+        return args
+
+    @classmethod
+    def _ensure_required_tool_calls(cls, calls: list[Any], plan: dict[str, Any], query: str, added: list[dict[str, Any]] | None = None) -> list[Any]:
+        """Add any required call Gemini skipped.
+
+        Every call added here is also appended to ``added`` so the API response
+        and the evaluation can report Gemini's own tool choices separately from
+        the code's safety net.
+        """
         required_groups = [
             set(step.get("preferred_tools", []))
             for step in plan.get("steps", [])
@@ -103,16 +110,23 @@ class WeatherAgent:
         for group in required_groups:
             if group and not group.intersection(present):
                 preferred = "search_weather" if "search_weather" in group else sorted(group)[0]
-                calls.append(types.FunctionCall(name=preferred, args=cls._infer_tool_args(preferred, query)))
+                args = cls._infer_tool_args(preferred, query)
+                if args is None:
+                    continue
+                calls.append(types.FunctionCall(name=preferred, args=args))
+                present.add(preferred)
+                if added is not None:
+                    added.append({"name": preferred, "arguments": dict(args)})
 
-        normalized_query = " ".join(query.lower().split())
-        if "tomorrow" in normalized_query or "today" in normalized_query:
-            target_date = "tomorrow" if "tomorrow" in normalized_query else "today"
+        # Fill in a missing date only. A date Gemini chose explicitly is kept,
+        # because comparisons can legitimately mix "today" and "tomorrow".
+        target_date = cls._query_date(query)
+        if target_date and plan.get("intent") != "comparison":
             for call in calls:
                 name = str(getattr(call, "name", ""))
                 if name in {"get_forecast", "assess_weather_risk"}:
                     args = dict(getattr(call, "args", {}) or {})
-                    args["date"] = target_date
+                    args.setdefault("date", target_date)
                     call.args = args
 
         return calls
@@ -154,7 +168,7 @@ class WeatherAgent:
         runtime = AgentState(query=query, trace_id=trace_id)
         emit("agent.start", trace_id=trace_id, model=self.model)
 
-        async with connect(trace_id=trace_id) as session:
+        async with agent_session(trace_id=trace_id) as session:
             discovered = await discover_tools(session)
             registry = MCPCapabilityRegistry(discovered, allowed_tools=ALLOWED_TOOLS)
             capability_router = MCPCapabilityRouter(registry)
@@ -167,6 +181,7 @@ class WeatherAgent:
             messages: list[Any] = [types.Content(role="user", parts=[types.Part.from_text(text=query)])]
             active_declarations = declarations
             structured_response: dict[str, Any] = {}
+            code_added_calls: list[dict[str, Any]] = []
 
             async def router_node(_: GraphState) -> dict[str, Any]:
                 return {"intent": classify(query), "route": "pending"}
@@ -183,9 +198,6 @@ class WeatherAgent:
                     runtime.route = "rag"
                 else:
                     runtime.route = "mcp"
-
-                if state.get("intent") and state["intent"] != runtime.intent:
-                    raise RuntimeError("Router and planner intent disagree")
 
                 route = capability_router.route_plan(plan)
                 missing_groups = [
@@ -218,7 +230,7 @@ class WeatherAgent:
                 round_no = int(state.get("rounds", 0)) + 1
                 with span("agent.reason", trace_id=trace_id, round=round_no) as info:
                     response = await self._reason(messages, active_declarations, runtime.plan, state.get("retry_reason"))
-                    calls = self._ensure_required_tool_calls(list(response.function_calls or []), runtime.plan, query)
+                    calls = self._ensure_required_tool_calls(list(response.function_calls or []), runtime.plan, query, added=code_added_calls)
                     info.update(tool_calls=len(calls), model=self.model)
 
                 candidate = response.candidates[0] if response.candidates else None
@@ -263,18 +275,33 @@ class WeatherAgent:
             result = await graph.ainvoke({"query": query, "trace_id": trace_id, "rounds": 0, "retry_count": 0})
 
         success = runtime.required_requirements_satisfied
-        emit("agent.end", trace_id=trace_id, intent=runtime.intent, rounds=result.get("rounds", 0), tools=len(runtime.tool_calls), success=success)
+        answer = result.get("answer", "")
+        warnings = list(structured_response.get("warnings", []))
+
+        # Confidence comes from facts the code knows, not from the model.
+        status = evidence_status(runtime.plan, runtime.observations, result.get("verification", {}))
+        # Every weather number in the answer must appear in the tool data.
+        unchecked = unverified_numbers(answer, runtime.evidence_payload())
+        if unchecked:
+            warnings.append("Could not verify these values against the tool data: " + ", ".join(unchecked) + ".")
+            status = {"level": "partial" if status["level"] == "complete" else status["level"], "reasons": status["reasons"] + ["Some numbers in the answer were not found in the tool data."]}
+
+        emit("agent.end", trace_id=trace_id, intent=runtime.intent, rounds=result.get("rounds", 0), tools=len(runtime.tool_calls), success=success, confidence=status["level"], unverified_numbers=len(unchecked))
         return {
             "success": success,
-            "answer": result.get("answer", ""),
-            "confidence": structured_response.get("confidence"),
+            "answer": answer,
+            "confidence": status["level"],
+            "confidence_reasons": status["reasons"],
+            "model_confidence": structured_response.get("confidence"),
+            "unverified_numbers": unchecked,
             "citations": structured_response.get("citations", []),
-            "warnings": structured_response.get("warnings", []),
+            "warnings": warnings,
             "trace_id": trace_id,
             "intent": runtime.intent,
             "route": runtime.route,
             "plan": runtime.plan,
             "tool_calls": runtime.tool_calls,
+            "code_added_tool_calls": code_added_calls,
             "observations": runtime.observations,
             "evidence": runtime.evidence_payload(),
             "sources": runtime.sources,
