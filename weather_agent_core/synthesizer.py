@@ -60,6 +60,3 @@ class GeminiSynthesizer:
         for key in ("citations", "warnings"):
             if not isinstance(result.get(key), list) or not all(isinstance(item, str) for item in result[key]): raise RuntimeError(f"Gemini synthesizer returned invalid {key}")
         return result
-
-    async def synthesize(self, query: str, state: Any) -> str:
-        return (await self.synthesize_structured(query, state))["answer"]

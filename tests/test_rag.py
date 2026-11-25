@@ -6,7 +6,7 @@ from rag.query.analyzer import QueryPlan
 
 
 def _result(documents, context, sources):
-    plan = QueryPlan("test query", "knowledge", "simple", False, {"location": None, "state": None})
+    plan = QueryPlan("test query", "knowledge")
     return RetrievalResult(plan, documents, context, sources)
 
 

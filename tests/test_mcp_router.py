@@ -10,9 +10,11 @@ def registry():
     ])
 
 
-def test_routes_requested_capabilities_to_discovered_tools():
-    route = MCPCapabilityRouter(registry()).route(["forecast", "knowledge"])
-    assert route.has_match
+def test_routes_capability_groups_to_discovered_tools():
+    route = MCPCapabilityRouter(registry()).route_plan({"steps": [
+        {"required": True, "preferred_tools": ["forecast"]},
+        {"required": True, "preferred_tools": ["knowledge"]},
+    ]})
     assert route.selected == ("get_forecast", "search_weather")
     assert route.rejected == ()
 
@@ -28,6 +30,6 @@ def test_route_plan_ignores_optional_steps():
 
 
 def test_unknown_capability_is_auditable():
-    route = MCPCapabilityRouter(registry()).route(["database"])
-    assert not route.has_match
+    route = MCPCapabilityRouter(registry()).route_plan({"steps": [{"required": True, "preferred_tools": ["database"]}]})
+    assert route.selected == ()
     assert route.rejected == ("database",)

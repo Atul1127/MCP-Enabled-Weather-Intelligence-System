@@ -39,8 +39,6 @@ EMBEDDING_MODEL = os.environ.get(
     "sentence-transformers/all-MiniLM-L6-v2",
 )
 
-EMBEDDING_DIMENSION = 384
-
 CHUNK_SIZE = int(
     os.environ.get(
         "WEATHER_CHUNK_SIZE",
@@ -579,51 +577,6 @@ def index_documents(
 # ---------------------------------------------------------------------------
 # Index a specific document
 # ---------------------------------------------------------------------------
-
-def index_document_by_id(
-    document_id: str,
-) -> int:
-    """
-    Re-index one weather document.
-    """
-
-    rows = lakebase.run_query(
-        """
-        SELECT
-            id,
-            location,
-            state,
-            district,
-            source,
-            source_type,
-            headline,
-            narrative_text,
-            forecast_date,
-            temperature_min_c,
-            temperature_max_c,
-            rainfall_mm,
-            precipitation_probability,
-            weather_code,
-            severity,
-            issued_at
-
-        FROM weather_documents
-
-        WHERE id = %s
-        """,
-        (
-            document_id,
-        ),
-    )
-
-    if not rows:
-        raise ValueError(
-            f"Document not found: {document_id}"
-        )
-
-    return embed_document(
-        rows[0]
-    )
 
 
 # ---------------------------------------------------------------------------

@@ -17,7 +17,6 @@ class AgentState:
     evidence: list[Evidence] = field(default_factory=list)
     sources: list[dict[str, Any]] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
 
     def add_observation(self, tool: str, arguments: dict[str, Any], result: Any) -> None:
         self.tool_calls.append({"name": tool, "arguments": arguments})
@@ -36,15 +35,6 @@ class AgentState:
             if not any(obs["tool"] in group and not (isinstance(obs.get("result"), dict) and obs["result"].get("success") is False) for obs in self.observations):
                 return False
         return True
-
-    @property
-    def retrieval_failed(self) -> bool:
-        return any(obs["tool"] in {"search_weather", "ask_weather"} and isinstance(obs.get("result"), dict) and obs["result"].get("success") is False for obs in self.observations)
-
-    @property
-    def has_live_failure(self) -> bool:
-        live_tools = {"get_weather", "get_forecast", "get_weather_alerts", "assess_weather_risk"}
-        return any(obs["tool"] in live_tools and isinstance(obs.get("result"), dict) and obs["result"].get("success") is False for obs in self.observations)
 
     def evidence_payload(self) -> list[dict[str, Any]]:
         return [item.to_dict() for item in self.evidence]

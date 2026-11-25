@@ -9,10 +9,6 @@ class GraphState(TypedDict, total=False):
     intent: str
     route: str
     plan: dict[str, Any]
-    agent_state: Any
-    contents: list[Any]
-    declarations: list[Any]
-    calls: list[Any]
     pending_calls: list[Any]
     candidate: Any
     next_action: str

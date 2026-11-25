@@ -8,7 +8,7 @@ from pathlib import Path
 from rag.pipeline import RAGPipeline
 from evaluation.retrieval_metrics import evaluate_ranked_documents, evaluate_relevant_documents
 
-DATASET = Path(__file__).with_name("rag_eval_dataset.json")
+DATASET = Path(__file__).resolve().parent / "datasets" / "rag_eval_dataset.json"
 REPORT = Path(__file__).with_name("rag_retrieval_report.json")
 KS = (1, 3, 5, 10)
 

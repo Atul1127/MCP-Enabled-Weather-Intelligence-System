@@ -88,7 +88,7 @@ class RAGPipeline:
         if state is not None:
             state = validate_location(state)
         limit = self.top_k if top_k is None else max(1, min(20, int(top_k)))
-        plan = analyze(text, location=location, state=state)
+        plan = analyze(text)
         store = self._get_store()
         # None means "no filter"; materializing every row ID would send the whole
         # table back to the database as an IN (...) list on every request.

@@ -1,6 +1,7 @@
 """Simple benchmark for lexical and optional vector retrieval."""
 from __future__ import annotations
 
+import importlib.util
 import json
 import math
 import statistics
@@ -110,7 +111,16 @@ def benchmark_cases(cases: list[dict[str, Any]], store: Any) -> dict[str, Any]:
     }
 
 
+def _require_ml_extras() -> None:
+    if importlib.util.find_spec("sentence_transformers") is None:
+        raise SystemExit(
+            "retrieval_benchmark compares dense, BM25 and hybrid retrieval and needs the optional ML "
+            "dependencies: python -m pip install -r requirements-rag-ml.txt"
+        )
+
+
 def main() -> None:
+    _require_ml_extras()
     cases = json.loads(DATASET.read_text(encoding="utf-8"))["cases"]
     report = benchmark_cases(cases, get_store())
     REPORT.write_text(json.dumps(report, indent=2), encoding="utf-8")

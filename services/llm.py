@@ -14,10 +14,6 @@ except Exception:
 _GEMINI_CLIENT: Any | None = None
 
 
-def provider_name() -> str:
-    return "gemini"
-
-
 def model_name() -> str:
     return os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 

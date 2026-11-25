@@ -14,9 +14,6 @@ class MCPCapability:
     schema: dict[str, Any]
     capabilities: frozenset[str]
 
-    def supports(self, capability: str) -> bool:
-        return capability.strip().lower() in self.capabilities
-
 
 class MCPCapabilityRegistry:
     """Discover, validate and select MCP capabilities without hardcoding schemas."""
@@ -80,20 +77,6 @@ class MCPCapabilityRegistry:
             return list(self._capabilities)
         return [item for item in self._capabilities if item.capabilities & wanted]
 
-    def declarations(self) -> list[dict[str, Any]]:
-        """Return Gemini-compatible function declarations for all permitted tools."""
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": item.name,
-                    "description": item.description,
-                    "parameters": item.schema,
-                },
-            }
-            for item in self._capabilities
-        ]
-
     def summary(self) -> dict[str, Any]:
         return {
             "tool_count": len(self._capabilities),
@@ -102,7 +85,3 @@ class MCPCapabilityRegistry:
                 for item in self._capabilities
             ],
         }
-
-
-def build_registry(tools: list[dict[str, Any]], allowed_tools: Iterable[str] | None = None) -> MCPCapabilityRegistry:
-    return MCPCapabilityRegistry(tools, allowed_tools=allowed_tools)

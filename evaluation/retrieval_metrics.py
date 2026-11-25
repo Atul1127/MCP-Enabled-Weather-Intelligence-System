@@ -5,15 +5,6 @@ import math
 from typing import Sequence
 
 
-def recall_at_k(relevances: Sequence[int], k: int) -> float:
-    if k < 1:
-        raise ValueError("k must be positive")
-    total = sum(1 for value in relevances if value)
-    if total == 0:
-        return 0.0
-    return min(1.0, sum(1 for value in relevances[:k] if value) / total)
-
-
 def precision_at_k(relevances: Sequence[int], k: int) -> float:
     if k < 1:
         raise ValueError("k must be positive")

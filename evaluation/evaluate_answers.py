@@ -25,7 +25,7 @@ async def judge(case: dict, answer: str, evidence: list[dict]) -> dict:
 async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", default=str(DATASET))
-    parser.add_argument("--output", default="evaluation/answer_results.json")
+    parser.add_argument("--output", default="evaluation/answer_report.json")
     args = parser.parse_args()
     cases = json.loads(Path(args.dataset).read_text(encoding="utf-8"))
     results = []

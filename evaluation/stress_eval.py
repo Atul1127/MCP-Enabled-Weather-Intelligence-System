@@ -15,6 +15,8 @@ import time
 from typing import Any
 
 from agent import run_agent
+from evaluation.agent_eval import aggregate
+from evaluation.exception_utils import classify_exception, root_exception
 
 CITIES = ("Kolkata", "Mumbai", "Delhi", "Bengaluru", "Chennai", "Hyderabad", "Pune", "Jaipur")
 CURRENT = (
@@ -103,10 +105,8 @@ def _failure_detail(result: dict[str, Any]) -> str | None:
 
 
 def _exception_detail(exc: BaseException) -> str:
-    if isinstance(exc, BaseExceptionGroup):
-        details = [_exception_detail(child) for child in exc.exceptions]
-        return details[0] if details else "ExceptionGroup: no underlying exception detail"
-    return f"{type(exc).__name__}: {exc}"
+    root = root_exception(exc)
+    return f"{type(root).__name__}: {root}"
 
 
 async def main() -> None:
@@ -114,15 +114,18 @@ async def main() -> None:
     limit = int(os.environ.get("WEATHER_STRESS_LIMIT", str(len(cases))))
     cases = cases[: max(1, min(limit, len(cases)))]
     rows: list[dict[str, Any]] = []
+    agent_runs: list[dict[str, Any]] = []
 
     for index, case in enumerate(cases, start=1):
         started = time.perf_counter()
         try:
             result = await run_agent(case["question"])
             error = _failure_detail(result)
+            error_class = None
         except Exception as exc:
             result = {"success": False, "tool_calls": []}
             error = _exception_detail(exc)
+            error_class = classify_exception(exc)
         latency = (time.perf_counter() - started) * 1000
         calls = result.get("tool_calls") or []
         required_args = case.get("required_args", [])
@@ -131,7 +134,9 @@ async def main() -> None:
             any(call.get("name") == item["tool"] and _arg_match(call.get("arguments") or {}, item) for call in calls)
             for item in required_args
         )
-        quota_failure = _is_quota_failure(error)
+        quota_failure = error_class == "quota_exhausted" or _is_quota_failure(error)
+        if not quota_failure:
+            agent_runs.append({**result, "expected_tools": set(case["expected_tools"])})
         rows.append({
             "id": case["id"], "category": case["category"],
             "success": bool(result.get("success")),
@@ -139,7 +144,7 @@ async def main() -> None:
             "argument_accuracy": args_ok,
             "argument_evaluable": bool(required_args),
             "provider_quota_failure": quota_failure,
-            "latency_ms": round(latency, 2), "error": error,
+            "latency_ms": round(latency, 2), "error": error, "error_class": error_class,
         })
         if index % 5 == 0 or index == len(cases):
             print(f"[{index}/{len(cases)}] evaluated", flush=True)
@@ -161,6 +166,7 @@ async def main() -> None:
         "p50_latency_ms": round(statistics.median(latencies), 2) if latencies else None,
         "p95_latency_ms": round(sorted(latencies)[max(0, int(len(latencies) * 0.95) - 1)], 2) if latencies else None,
         "total_task_success_rate_including_quota_failures": round(sum(r["success"] for r in rows) / len(rows), 4) if rows else None,
+        "agent_metrics": aggregate(agent_runs),
     }
     report = {"suite": "balanced 100-case stress evaluation", "summary": summary, "rows": rows}
     path = os.environ.get("WEATHER_STRESS_REPORT", "evaluation/stress_report.json")

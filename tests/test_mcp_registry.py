@@ -18,12 +18,11 @@ def test_registry_filters_duplicates_and_policy():
 
 def test_registry_infers_capabilities_and_selects():
     registry = MCPCapabilityRegistry(_tools())
-    assert registry.get("search_weather").supports("knowledge")
-    assert registry.get("get_weather_alerts").supports("alerts")
+    assert "knowledge" in registry.get("search_weather").capabilities
+    assert "alerts" in registry.get("get_weather_alerts").capabilities
     assert {item.name for item in registry.select(["knowledge"])} == {"search_weather"}
 
 
-def test_registry_declarations_are_schema_preserving():
+def test_registry_preserves_discovered_schema():
     registry = MCPCapabilityRegistry(_tools())
-    declaration = next(item for item in registry.declarations() if item["function"]["name"] == "get_weather")
-    assert declaration["function"]["parameters"] == {"type": "object"}
+    assert registry.get("get_weather").schema == {"type": "object"}
